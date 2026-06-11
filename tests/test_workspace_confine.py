@@ -1,33 +1,69 @@
-"""Workspace confinement: file tools are hard-bounded to the workspace folder
-(layered on upstream's sensitive-path policy); bash runs with cwd there."""
+"""Workspace confinement.
+
+The agent's per-turn workspace is a single context-local binding set in
+execute_tool_block. The shared path resolvers (_resolve_tool_path /
+_resolve_search_root) and the subprocess cwd helper (agent_cwd) read it, so
+confinement is enforced in ONE place: a tool that uses the shared helpers is
+confined automatically and a new tool cannot accidentally bypass it.
+
+Covers: the resolver helper, the central binding (the safety net), end-to-end
+confinement of read/write/edit/grep/ls + subprocess cwd via execute_tool_block,
+the get_workspace tool, no-leak across calls, and the admin-gated browse route.
+"""
+import json
 import os
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 
-from src.tool_execution import _resolve_tool_path_in_workspace, _direct_fallback
+from src.tool_execution import (
+    _AGENT_WORKDIR,
+    _active_workspace,
+    _direct_fallback,
+    _resolve_search_root,
+    _resolve_tool_path,
+    _resolve_tool_path_in_workspace,
+    agent_cwd,
+    execute_tool_block,
+    get_active_workspace,
+)
 
 
-def test_workspace_resolver_confines():
-    ws = tempfile.mkdtemp()
-    open(os.path.join(ws, "a.txt"), "w").write("x")
+def _block(tool, content=""):
+    return SimpleNamespace(tool_type=tool, content=content)
+
+
+@pytest.fixture
+def ws():
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "a.txt"), "w") as f:
+        f.write("x")
+    return d
+
+
+@pytest.fixture
+def admin(monkeypatch):
+    """Pass the public-tool gate so file tools dispatch in tests."""
+    monkeypatch.setattr(
+        "src.tool_execution.owner_is_admin_or_single_user", lambda owner: True
+    )
+
+
+# ── the resolver helper ────────────────────────────────────────────────
+
+def test_resolver_confines(ws):
     real = os.path.realpath(os.path.join(ws, "a.txt"))
-    # relative path resolves under the workspace
-    assert _resolve_tool_path_in_workspace(ws, "a.txt") == real
-    # absolute path inside the workspace is allowed
-    assert _resolve_tool_path_in_workspace(ws, os.path.join(ws, "a.txt")) == real
-    # absolute path outside is rejected (sibling temp dir, portable across OSes)
+    assert _resolve_tool_path_in_workspace(ws, "a.txt") == real          # relative
+    assert _resolve_tool_path_in_workspace(ws, os.path.join(ws, "a.txt")) == real  # abs inside
     outside = tempfile.mkdtemp()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):                                       # abs outside
         _resolve_tool_path_in_workspace(ws, os.path.join(outside, "x.txt"))
-    # parent-escape is rejected
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError):                                       # parent escape
         _resolve_tool_path_in_workspace(ws, os.path.join("..", "..", "escape.txt"))
 
 
-def test_workspace_resolver_blocks_sensitive():
-    """Upstream's sensitive-file deny list still applies inside the workspace."""
-    ws = tempfile.mkdtemp()
+def test_resolver_blocks_sensitive_inside_workspace(ws):
     os.makedirs(os.path.join(ws, ".ssh"), exist_ok=True)
     with pytest.raises(ValueError):
         _resolve_tool_path_in_workspace(ws, ".ssh/authorized_keys")
@@ -53,6 +89,62 @@ async def test_read_write_confined_in_workspace():
     escape = os.path.join(outside, "_ws_escape.txt")
     res = await _direct_fallback("write_file", f"{escape}\nx", workspace=ws)
     assert res["exit_code"] == 1 and "outside the workspace" in res["error"]
+
+
+# ── the central binding: the safety net ─────────────────────────────────
+
+def test_active_binding_confines_shared_resolvers(ws):
+    """ANY tool resolving paths through the shared helpers is confined while the
+    binding is active, without doing anything workspace-specific itself. This is
+    what stops a newly added tool from accidentally ignoring the workspace."""
+    token = _active_workspace.set(ws)
+    try:
+        assert get_active_workspace() == ws
+        assert agent_cwd() == ws
+        assert _resolve_tool_path("a.txt") == os.path.realpath(os.path.join(ws, "a.txt"))
+        with pytest.raises(ValueError):          # normally-allowed root, now outside ws
+            _resolve_tool_path("/tmp/whatever.txt")
+        assert _resolve_search_root("") == os.path.realpath(ws)
+    finally:
+        _active_workspace.reset(token)
+
+
+def test_no_binding_uses_default_roots():
+    assert get_active_workspace() is None
+    assert agent_cwd() == _AGENT_WORKDIR
+    with pytest.raises(ValueError):
+        _resolve_tool_path("/etc/hosts")
+
+
+# ── end-to-end via execute_tool_block (sets + resets the binding) ───────
+
+@pytest.mark.asyncio
+async def test_read_write_edit_confined_e2e(ws, admin):
+    _, r = await execute_tool_block(_block("write_file", "note.txt\nhello"), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and os.path.isfile(os.path.join(ws, "note.txt"))
+    _, r = await execute_tool_block(_block("read_file", "note.txt"), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and r["output"] == "hello"
+
+    with open(os.path.join(ws, "f.txt"), "w") as f:
+        f.write("foo bar")
+    _, r = await execute_tool_block(
+        _block("edit_file", json.dumps({"path": "f.txt", "old_string": "foo", "new_string": "baz"})),
+        owner="a", workspace=ws,
+    )
+    assert r["exit_code"] == 0
+    with open(os.path.join(ws, "f.txt")) as f:
+        assert f.read() == "baz bar"
+
+    # outside the workspace is rejected, and nothing is created
+    outside = tempfile.mkdtemp()
+    of = os.path.join(outside, "secret.txt")
+    with open(of, "w") as f:
+        f.write("nope")
+    _, r = await execute_tool_block(_block("read_file", of), owner="a", workspace=ws)
+    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+    escape = os.path.join(outside, "_esc.txt")
+    _, r = await execute_tool_block(_block("write_file", f"{escape}\nx"), owner="a", workspace=ws)
+    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
     assert not os.path.exists(escape)
 
 
@@ -131,6 +223,21 @@ async def test_glob_confined_e2e(ws, admin):
     assert r["exit_code"] == 0 and "No files" in r["output"] and secret not in r["output"]
     _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": secret})), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "No files" in r["output"]
+
+
+@pytest.mark.asyncio
+async def test_grep_and_ls_confined_e2e(ws, admin):
+    with open(os.path.join(ws, "doc.txt"), "w") as f:
+        f.write("hello workspace\n")
+    _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "hello"})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "doc.txt" in r["output"]
+    outside = tempfile.mkdtemp()
+    _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "x", "path": outside})), owner="a", workspace=ws)
+    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+    _, r = await execute_tool_block(_block("ls", ""), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "doc.txt" in r["output"]
+    _, r = await execute_tool_block(_block("ls", outside), owner="a", workspace=ws)
+    assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
 
 
 @pytest.mark.asyncio

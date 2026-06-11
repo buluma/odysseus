@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
-from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, MkdirTool, RmTool, MvTool, CpTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, MkdirTool, RmTool, MvTool, CpTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 
 TOOL_HANDLERS = {
@@ -44,6 +44,7 @@ TOOL_HANDLERS = {
     "rm": RmTool().execute,
     "mv": MvTool().execute,
     "cp": CpTool().execute,
+    "get_workspace": GetWorkspaceTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls",
+             "grep", "glob", "ls", "get_workspace",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",

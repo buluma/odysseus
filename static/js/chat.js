@@ -1785,6 +1785,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'workspace_rejected') {
+                // Server refused to bind the posted workspace (deleted folder,
+                // file path, sensitive dir, filesystem root). Clear the stored
+                // value so the pill stops claiming a confinement that is not in
+                // effect, and tell the user.
+                const _wsPath = (json.data && json.data.path) || '';
+                import('./workspace.js').then((m) => {
+                  const ws = m.default || m;
+                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                });
+                uiModule.showToast(
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  6000
+                );
+                continue;
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};

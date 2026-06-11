@@ -1633,6 +1633,8 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
+      try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }

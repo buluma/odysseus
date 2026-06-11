@@ -1230,6 +1230,8 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
+// Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
+// show / set <path> / clear / pick (open the directory browser).
 async function _cmdWorkspace(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   const rest = args.slice(1).join(' ').trim();
@@ -1240,8 +1242,13 @@ async function _cmdWorkspace(args, ctx) {
   }
   if (sub === 'set' || sub === 'cd' || sub === 'use') {
     if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
-    workspaceModule.setWorkspace(rest);
-    slashReply(`Workspace set: <code>${uiModule.esc(rest)}</code>`);
+    // Validate server-side before persisting so the pill never claims a
+    // workspace the backend will refuse to bind (typo, file path, deleted
+    // folder, sensitive dir, filesystem root).
+    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
+      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
+      else slashReply(`Not a usable workspace folder: <code>${uiModule.esc(rest)}</code>. It must be an existing directory, not a filesystem root or sensitive path.`);
+    });
     return true;
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
