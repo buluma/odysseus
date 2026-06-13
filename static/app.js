@@ -23,6 +23,7 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
+import eventsModule from './js/events.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -3435,6 +3436,15 @@ function startOdysseusApp() {
       });
     }
   });
+
+  // Rail events button — opens the events panel directly
+  const _railEventsBtn = el('rail-events');
+  if (_railEventsBtn) {
+    _railEventsBtn.addEventListener('click', () => {
+      if (eventsModule.isEventsOpen()) eventsModule.closeEvents();
+      else eventsModule.openEvents();
+    });
+  }
 
   // Rail chats — click to open the completed background session
   const _railChatsBtn = el('rail-chats');
