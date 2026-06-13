@@ -45,10 +45,10 @@
   - [x] Convert a Slack incident thread into a clean Redmine comment.
   - [x] Daily digest: open issues, stale issues, assigned issues.
 
-- [ ] Streamline sync watcher
-  - [ ] Run sync jobs from Slack.
-  - [ ] Post sync summaries.
-  - [ ] Return created/updated/error counts.
+- [x] Streamline sync watcher
+  - [x] Run sync jobs from Slack.
+  - [x] Post sync summaries.
+  - [x] Return created/updated/error counts.
 
 - [x] n8n mobile control layer
   - [x] Add Slack route coverage for n8n health and failed workflows.

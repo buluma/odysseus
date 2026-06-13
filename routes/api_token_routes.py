@@ -42,6 +42,7 @@ ALLOWED_SCOPES = {
     "n8n:write",
     "homelab:write",
     "converge:write",
+    "mac:control",
 }
 TOKEN_PROFILES = {
     'chat': ['chat'],
@@ -57,6 +58,7 @@ TOKEN_PROFILES = {
         'events:resolve',
         'n8n:read',
         'n8n:events',
+        'mac:control',
     ],
     'codex_todos': ['todos:read', 'todos:write'],
     'codex_email_drafts': ['email:read', 'email:draft', 'documents:read', 'documents:write'],
