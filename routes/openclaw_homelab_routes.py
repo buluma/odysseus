@@ -38,6 +38,11 @@ class IncidentAlertRequest(BaseModel):
     labels: dict[str, Any] = Field(default_factory=dict)
     annotations: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    common_labels: dict[str, Any] = Field(default_factory=dict, alias="commonLabels")
+    common_annotations: dict[str, Any] = Field(default_factory=dict, alias="commonAnnotations")
+    alerts: list[dict[str, Any]] = Field(default_factory=list)
+    status: str | None = None
+    receiver: str | None = None
 
 from routes.homelab_routes import (
     HOMELAB_READ_SCOPES,
@@ -457,11 +462,13 @@ def _ops_result(kind: str, message: str, detail: dict[str, Any]) -> dict[str, An
 
 
 def _alert_text(body: IncidentAlertRequest, service: str) -> tuple[str, str]:
-    title = (body.title or body.annotations.get('summary') or body.labels.get('alertname') or f'{service} alert')
+    annotations = body.annotations or body.common_annotations or {}
+    labels = body.labels or body.common_labels or {}
+    title = (body.title or annotations.get('summary') or labels.get('alertname') or f'{service} alert')
     summary = (
         body.summary
-        or body.annotations.get('description')
-        or body.annotations.get('message')
+        or annotations.get('description')
+        or annotations.get('message')
         or body.metadata.get('message')
         or title
     )
@@ -469,12 +476,18 @@ def _alert_text(body: IncidentAlertRequest, service: str) -> tuple[str, str]:
 
 
 def _alert_service(body: IncidentAlertRequest) -> str:
+    labels = body.labels or body.common_labels or {}
+    if not labels and body.alerts:
+        first = body.alerts[0]
+        if isinstance(first, dict) and isinstance(first.get('labels'), dict):
+            labels = first['labels']
     value = (
         body.service
-        or body.labels.get('service')
-        or body.labels.get('container')
-        or body.labels.get('job')
-        or body.labels.get('instance')
+        or labels.get('service')
+        or labels.get('container')
+        or labels.get('container_label_com_docker_compose_service')
+        or labels.get('job')
+        or labels.get('instance')
         or 'unknown'
     )
     service = re.sub(r'[^A-Za-z0-9_.:@-]+', '-', str(value)).strip('-')
@@ -989,8 +1002,11 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         metadata = _sanitize_dict({
             **body.metadata,
             'container': body.container,
-            'labels': body.labels,
-            'annotations': body.annotations,
+            'labels': body.labels or body.common_labels,
+            'annotations': body.annotations or body.common_annotations,
+            'alerts': body.alerts,
+            'status': body.status,
+            'receiver': body.receiver,
         })
         dedupe_key = body.dedupe_key or f'incident:{body.source}:{service}:{title}'
         store = EventStore()

@@ -711,6 +711,26 @@ async def test_record_incident_creates_durable_event(mock_event_store):
 
 
 @pytest.mark.asyncio
+async def test_record_incident_accepts_grafana_webhook_shape(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentAlertRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/record', 'POST')
+    body = IncidentAlertRequest.model_validate({
+        'receiver': 'Odysseus Incident Assistant',
+        'status': 'firing',
+        'commonLabels': {'alertname': 'ContainerDown', 'service': 'immich', 'severity': 'critical'},
+        'commonAnnotations': {'summary': 'Immich is down', 'description': 'Container exited'},
+        'alerts': [{'labels': {'container': 'immich'}, 'annotations': {'summary': 'Immich is down'}}],
+    })
+    result = await ep(_request(scopes=['events:write']), body=body)
+    assert result['event']['service'] == 'immich'
+    assert result['event']['title'] == 'Immich is down'
+    stored = mock_event_store.get_event(result['event']['id'])
+    assert stored['metadata']['status'] == 'firing'
+    assert stored['metadata']['receiver'] == 'Odysseus Incident Assistant'
+
+
+@pytest.mark.asyncio
 async def test_diagnose_incident_requires_event_and_homelab_read(mock_event_store):
     event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'Container down', 'k')
     router = setup_openclaw_homelab_routes()
