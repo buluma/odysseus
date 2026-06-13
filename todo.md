@@ -38,12 +38,12 @@
 
 ## Backlog
 
-- [ ] Redmine helper
-  - [ ] Create Redmine tickets from Slack.
-  - [ ] Create Redmine tickets from urgent email.
-  - [ ] Summarize long Redmine updates.
-  - [ ] Convert a Slack incident thread into a clean Redmine comment.
-  - [ ] Daily digest: open issues, stale issues, assigned issues.
+- [x] Redmine helper
+  - [x] Create Redmine tickets from Slack.
+  - [x] Create Redmine tickets from urgent email.
+  - [x] Summarize long Redmine updates.
+  - [x] Convert a Slack incident thread into a clean Redmine comment.
+  - [x] Daily digest: open issues, stale issues, assigned issues.
 
 - [ ] Streamline sync watcher
   - [ ] Run sync jobs from Slack.

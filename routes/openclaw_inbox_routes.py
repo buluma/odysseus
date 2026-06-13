@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ from src.constants import DATA_DIR
 
 BASE_URL = "/api/openclaw/inbox"
 EMAIL_READ_SCOPES = {"email:read"}
+CONVERGE_WRITE_SCOPES = {"converge:write"}
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
@@ -131,6 +133,13 @@ def _items(owner: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         items.append(item)
     items.sort(key=lambda item: (-item["score"], item["subject"].lower()))
     return state, items
+
+
+class SubmitTicketRequest(BaseModel):
+    confirm: bool = False
+    subject: str | None = None
+    description: str | None = None
+    priority: str | None = None
 
 
 class MuteRequest(BaseModel):
@@ -277,5 +286,59 @@ def setup_openclaw_inbox_routes() -> APIRouter:
             "requires_approval": True,
             "links": {"self": f"{BASE_URL}/triage/{item_id}/redmine-ticket/draft"},
         }
+
+    @router.post("/triage/{item_id}/redmine-ticket/submit")
+    async def submit_redmine_ticket(request: Request, item_id: str, body: SubmitTicketRequest):
+        """Submit a Redmine ticket to Converge from inbox triage. Requires: email:read + converge:write + confirm=true."""
+        _scope_owner(request, EMAIL_READ_SCOPES)
+        _scope_owner(request, CONVERGE_WRITE_SCOPES)
+        if not body.confirm:
+            raise HTTPException(400, "Write action requires confirm=true")
+
+        import os
+        create_path = (os.getenv("CONVERGE_TICKET_CREATE_PATH") or "").strip()
+        if not create_path:
+            raise HTTPException(501, "Converge ticket creation endpoint is not configured")
+        from routes.openclaw_bridge_routes import _converge_config
+        base_url, api_key = _converge_config()
+
+        item = _find_item(owner=getattr(request.state, "api_token_owner", None), item_id=item_id)
+        subject = body.subject or (item.get("subject") or "(no subject)")[:180]
+        tags = [str(tag) for tag in (item.get("tags") or []) if str(tag).strip()]
+        description = body.description or "\n".join([
+            "Submitted from OpenClaw inbox triage.",
+            "",
+            f"From: {item.get('from') or 'unknown'}",
+            f"Subject: {subject}",
+            f"Priority signal: {item.get('tier')} (score {item.get('score')})",
+            f"Reason: {item.get('reason') or 'not provided'}",
+            f"Tags: {', '.join(tags)}",
+        ])[:4000]
+        priority = body.priority or ("High" if (item.get("score") or 0) >= 3 else "Normal")
+        if not create_path.startswith("/"):
+            create_path = "/" + create_path
+        payload = {
+            "subject": subject,
+            "description": description,
+            "priority": priority,
+            "source": "odysseus_openclaw_inbox",
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}{create_path}", headers={"X-API-Key": api_key}, json=payload)
+        if resp.status_code >= 400:
+            raise HTTPException(500, f"Converge returned HTTP {resp.status_code}: {resp.text[:200]}")
+        data = resp.json() if isinstance(resp.json(), dict) else {}
+        issue = data.get("issue") or {}
+        issue_id = issue.get("id") or data.get("id")
+        issue_url = issue.get("url") or data.get("url")
+        result: dict[str, Any] = {
+            "status": "ok",
+            "message": f"Ticket submitted for inbox item {item_id}.",
+            "issue_id": issue_id,
+            "requires_approval": False,
+        }
+        if issue_url:
+            result["url"] = issue_url
+        return result
 
     return router

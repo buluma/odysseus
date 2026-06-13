@@ -41,12 +41,14 @@ ALLOWED_SCOPES = {
     "n8n:events",
     "n8n:write",
     "homelab:write",
+    "converge:write",
 }
 TOKEN_PROFILES = {
     'chat': ['chat'],
     'openclaw_bridge': [
         'chat',
         'converge:read',
+        'converge:write',
         'email:read',
         'homelab:read',
         'events:read',

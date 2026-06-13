@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -29,6 +30,9 @@ from src.tool_policy import build_effective_tool_policy
 
 CHAT_SCOPES = {"chat"}
 CONVERGE_READ_SCOPES = {"converge:read"}
+CONVERGE_WRITE_SCOPES = {"converge:write"}
+
+_STALE_DAYS = 14
 WORKFLOW_TRIGGER_SCOPES = {"workflows:trigger"}
 WEB_READ_SCOPES = {"web:read"}
 RESEARCH_RUN_SCOPES = {"research:run"}
@@ -190,6 +194,20 @@ class TicketSearchRequest(BaseModel):
     assignee: str | None = None
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+
+
+class CreateTicketRequest(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=500)
+    description: str = Field(..., min_length=1, max_length=10000)
+    project: str | None = None
+    priority: str = "Normal"
+    confirm: bool = False
+
+
+class AddTicketNoteRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=10000)
+    thread_url: str | None = None
+    confirm: bool = False
 
 
 def setup_openclaw_bridge_routes(
@@ -486,6 +504,112 @@ def setup_openclaw_bridge_routes(
                     pass
             else:
                 request.state.api_token = original_api_token
+
+    @router.post("/tickets")
+    async def create_ticket(request: Request, body: CreateTicketRequest):
+        """Create a Redmine ticket from Slack. Requires: converge:write + confirm=true."""
+        _scope_owner(request, CONVERGE_WRITE_SCOPES)
+        if not body.confirm:
+            raise HTTPException(400, "Write action requires confirm=true")
+        create_path = (os.getenv("CONVERGE_TICKET_CREATE_PATH") or "").strip()
+        if not create_path:
+            raise HTTPException(501, "Converge ticket creation endpoint is not configured")
+        base_url, api_key = _converge_config()
+        if not create_path.startswith("/"):
+            create_path = "/" + create_path
+        payload: dict[str, Any] = {
+            "subject": body.subject,
+            "description": body.description,
+            "priority": body.priority,
+            "source": "odysseus_openclaw_slack",
+        }
+        if body.project:
+            payload["project"] = body.project
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{base_url}{create_path}",
+                headers={"X-API-Key": api_key},
+                json=payload,
+            )
+        if resp.status_code >= 400:
+            raise HTTPException(500, f"Converge returned HTTP {resp.status_code}: {resp.text[:200]}")
+        data = resp.json() if isinstance(resp.json(), dict) else {}
+        issue = data.get("issue") or {}
+        issue_id = issue.get("id") or data.get("id")
+        issue_url = issue.get("url") or data.get("url")
+        result: dict[str, Any] = {"status": "ok", "message": "Ticket created.", "issue_id": issue_id, "requires_approval": False}
+        if issue_url:
+            result["url"] = issue_url
+        return result
+
+    @router.get("/tickets/digest")
+    async def tickets_digest(request: Request):
+        """Return open/stale/assigned ticket digest. Requires: converge:read."""
+        owner = _scope_owner(request, CONVERGE_READ_SCOPES)
+        base_url, api_key = _converge_config()
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{base_url}/api/external/tickets",
+                headers={"X-API-Key": api_key},
+                params={"status": "open", "limit": 50},
+            )
+        if resp.status_code >= 400:
+            raise HTTPException(resp.status_code, resp.text[:500])
+        tickets = resp.json().get("tickets", [])
+        stale_cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=_STALE_DAYS)
+        stale: list[dict[str, Any]] = []
+        assigned: list[dict[str, Any]] = []
+        for t in tickets:
+            updated_raw = t.get("updated_on") or t.get("updatedAt") or ""
+            if updated_raw:
+                try:
+                    updated = datetime.datetime.fromisoformat(updated_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+                    if updated < stale_cutoff:
+                        stale.append(t)
+                except ValueError:
+                    pass
+            assignee = t.get("assigned_to") or t.get("assignedTo") or ""
+            if assignee and owner.lower() in str(assignee).lower():
+                assigned.append(t)
+        return {
+            "status": "ok",
+            "message": f"{len(tickets)} open ticket(s); {len(stale)} stale; {len(assigned)} assigned to you.",
+            "open": tickets,
+            "stale": stale,
+            "assigned": assigned,
+            "requires_approval": False,
+        }
+
+    @router.post("/tickets/{ticket_id}/notes")
+    async def add_ticket_note(request: Request, ticket_id: str, body: AddTicketNoteRequest):
+        """Add a note/comment to a Redmine ticket. Requires: converge:write + confirm=true."""
+        _scope_owner(request, CONVERGE_WRITE_SCOPES)
+        if not body.confirm:
+            raise HTTPException(400, "Write action requires confirm=true")
+        base_url, api_key = _converge_config()
+        notes_path = (os.getenv("CONVERGE_TICKET_NOTES_PATH") or f"/api/external/tickets/{ticket_id}/notes").strip()
+        if "{ticket_id}" in notes_path:
+            notes_path = notes_path.replace("{ticket_id}", ticket_id)
+        if not notes_path.startswith("/"):
+            notes_path = "/" + notes_path
+        payload: dict[str, Any] = {"body": body.body}
+        if body.thread_url:
+            payload["thread_url"] = body.thread_url
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{base_url}{notes_path}",
+                headers={"X-API-Key": api_key},
+                json=payload,
+            )
+        if resp.status_code >= 400:
+            raise HTTPException(500, f"Converge returned HTTP {resp.status_code}: {resp.text[:200]}")
+        data = resp.json() if isinstance(resp.json(), dict) else {}
+        return {
+            "status": "ok",
+            "message": f"Note added to ticket {ticket_id}.",
+            "note_id": data.get("note_id") or data.get("id"),
+            "requires_approval": False,
+        }
 
     @router.post("/workflows/{name}/trigger")
     async def workflow_trigger(request: Request, name: str, body: WorkflowTriggerRequest):
