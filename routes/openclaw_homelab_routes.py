@@ -6,6 +6,7 @@ and event lifecycle.  No restart actions, no shell execution.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import json
 import http.client
@@ -61,6 +62,7 @@ from routes.homelab_routes import (
     _scope_owner,
 )
 from src.event_store import EventStore
+from core.database import SessionLocal, ScheduledTask, TaskRun
 
 logger = logging.getLogger(__name__)
 
@@ -560,6 +562,97 @@ async def _diagnose_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_TMPFS_TYPES = {'tmpfs', 'devtmpfs', 'overlay', 'shm', 'udev', 'cgroupfs', 'cgroup', 'proc', 'sysfs', 'devpts'}
+_DISK_HIGH_THRESHOLD = 80
+
+
+def _disk_usage_summary() -> dict[str, Any]:
+    result = _run_static_command(['df', '-h'], timeout=8)
+    if result.get('status') != 'ok':
+        return {'status': 'degraded', 'filesystems': [], 'high_usage': [], 'error': result.get('error') or result.get('stderr')}
+    filesystems = []
+    for line in (result.get('stdout') or '').splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        fs, size, used, avail, use_pct, mount = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+        if any(fs.startswith(t) or fs == t for t in _TMPFS_TYPES):
+            continue
+        if mount.startswith('/dev') or mount in ('/sys', '/proc', '/run'):
+            continue
+        try:
+            pct = int(use_pct.rstrip('%'))
+        except ValueError:
+            pct = 0
+        filesystems.append({'filesystem': fs, 'size': size, 'used': used, 'avail': avail, 'use_percent': pct, 'mount': mount})
+    high_usage = [fs for fs in filesystems if fs['use_percent'] >= _DISK_HIGH_THRESHOLD]
+    return {'status': 'ok', 'filesystems': filesystems, 'high_usage': high_usage}
+
+
+def _failed_cron_jobs(owner: str, hours: int = 24) -> list[dict[str, Any]]:
+    cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(hours=hours)
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(TaskRun, ScheduledTask)
+            .join(ScheduledTask, TaskRun.task_id == ScheduledTask.id)
+            .filter(ScheduledTask.owner == owner)
+            .filter(TaskRun.status == 'error')
+            .filter(TaskRun.started_at >= cutoff)
+            .order_by(TaskRun.started_at.desc())
+            .limit(20)
+            .all()
+        )
+        return [
+            {
+                'task_name': task.name,
+                'task_id': task.id,
+                'run_id': run.id,
+                'started_at': run.started_at.isoformat() if run.started_at else None,
+                'error': (run.error or '')[:400],
+            }
+            for run, task in rows
+        ]
+    except Exception as exc:
+        logger.error('Failed to query cron job failures: %s', exc)
+        return []
+    finally:
+        db.close()
+
+
+async def _redmine_tickets_needing_action(owner: str) -> dict[str, Any]:
+    base_url = (os.getenv('CONVERGE_BASE_URL') or '').strip().rstrip('/')
+    api_key = (os.getenv('CONVERGE_API_KEY') or '').strip()
+    if not base_url or not api_key:
+        return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                f'{base_url}/api/external/tickets',
+                headers={'X-API-Key': api_key},
+                params={'status': 'open', 'limit': 10},
+            )
+        if resp.status_code >= 400:
+            return {'configured': True, 'needing_action_count': 0, 'tickets': [], 'error': f'HTTP {resp.status_code}'}
+        data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+        tickets = data.get('tickets', []) if isinstance(data, dict) else []
+        actionable = [
+            {'id': t.get('id') or t.get('redmine_id'), 'subject': str(t.get('subject') or '')[:200], 'status': t.get('status_name') or t.get('status')}
+            for t in tickets if isinstance(t, dict)
+        ]
+        return {'configured': True, 'needing_action_count': len(actionable), 'tickets': actionable}
+    except Exception as exc:
+        return {'configured': True, 'needing_action_count': 0, 'tickets': [], 'error': str(exc)[:200]}
+
+
+def _netbox_sync_status() -> dict[str, Any]:
+    result = _run_static_command(['netbox-sync', '--status'], timeout=15)
+    return {
+        'status': result.get('status', 'degraded'),
+        'output': ((result.get('stdout') or '') + (result.get('stderr') or ''))[:1000],
+    }
+
+
 def setup_openclaw_homelab_routes() -> APIRouter:
     """Create and return the /api/openclaw/homelab router."""
     router = APIRouter(prefix=BASE_URL, tags=['openclaw-homelab'])
@@ -626,26 +719,31 @@ def setup_openclaw_homelab_routes() -> APIRouter:
 
     @router.get('/ops/daily-brief')
     async def openclaw_daily_brief(request: Request) -> dict[str, Any]:
-        """Aggregate daily briefing info (inbox, homelab events, n8n failures). Requires: homelab:read."""
+        """Aggregate daily ops briefing. Requires: homelab:read."""
         owner = _scope_owner(request, HOMELAB_READ_SCOPES)
-        
+
         from routes.openclaw_inbox_routes import _triage_state
         inbox_state = _triage_state(owner)
-        
+
         store = EventStore()
-        events = store.get_events(status="open")
-        
+        events = store.get_events(status='open')
+
         from src.n8n_client import N8nClient
         n8n_client = N8nClient()
         n8n_summary = {}
         if n8n_client.configured:
             n8n_summary = await n8n_client.get_failed_executions_summary()
-            
+
         services = _load_services()
         results, _, overall = await execute_health_checks(
             services, record_events=False, owner=owner, source_name='openclaw_health'
         )
-        
+
+        cron_failures = _failed_cron_jobs(owner)
+        disk = _disk_usage_summary()
+        redmine = await _redmine_tickets_needing_action(owner)
+        netbox = _netbox_sync_status()
+
         brief = {
             'inbox': {
                 'total_unread': inbox_state.get('total_unread', 0),
@@ -662,9 +760,16 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             'health': {
                 'overall_status': overall,
                 'unhealthy_count': sum(1 for r in results if r.get('status') != 'ok'),
-            }
+            },
+            'cron_jobs': {
+                'failed_count': len(cron_failures),
+                'recent_failures': cron_failures,
+            },
+            'disk': disk,
+            'redmine': redmine,
+            'netbox': netbox,
         }
-        
+
         return _ops_result('daily_brief', "Daily briefing aggregated successfully.", brief)
 
     # ------------------------------------------------------------------

@@ -672,6 +672,185 @@ async def test_daily_brief_endpoint(monkeypatch, mock_event_store):
     assert 'overall_status' in brief['health']
 
 
+@pytest.mark.asyncio
+async def test_daily_brief_includes_failed_cron_jobs(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._failed_cron_jobs', lambda owner: [
+        {'task_name': 'nightly-sync', 'started_at': '2026-06-13T02:00:00', 'error': 'timeout'},
+    ])
+    monkeypatch.setattr('routes.openclaw_homelab_routes._disk_usage_summary', lambda: {'status': 'ok', 'filesystems': [], 'high_usage': []})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._netbox_sync_status', lambda: {'status': 'ok', 'output': ''})
+
+    class MockN8nClient:
+        configured = False
+        async def get_failed_executions_summary(self): return {}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+
+    async def mock_redmine(owner): return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._redmine_tickets_needing_action', mock_redmine)
+
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    brief = result['ops']
+    assert brief['cron_jobs']['failed_count'] == 1
+    assert brief['cron_jobs']['recent_failures'][0]['task_name'] == 'nightly-sync'
+
+
+@pytest.mark.asyncio
+async def test_daily_brief_includes_disk_usage(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._failed_cron_jobs', lambda owner: [])
+    monkeypatch.setattr('routes.openclaw_homelab_routes._disk_usage_summary', lambda: {
+        'status': 'ok',
+        'filesystems': [{'mount': '/', 'use_percent': 45, 'avail': '120G'}],
+        'high_usage': [],
+    })
+    monkeypatch.setattr('routes.openclaw_homelab_routes._netbox_sync_status', lambda: {'status': 'ok', 'output': ''})
+
+    class MockN8nClient:
+        configured = False
+        async def get_failed_executions_summary(self): return {}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+
+    async def mock_redmine(owner): return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._redmine_tickets_needing_action', mock_redmine)
+
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    brief = result['ops']
+    assert brief['disk']['status'] == 'ok'
+    assert brief['disk']['filesystems'][0]['mount'] == '/'
+
+
+@pytest.mark.asyncio
+async def test_daily_brief_includes_redmine_tickets(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._failed_cron_jobs', lambda owner: [])
+    monkeypatch.setattr('routes.openclaw_homelab_routes._disk_usage_summary', lambda: {'status': 'ok', 'filesystems': [], 'high_usage': []})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._netbox_sync_status', lambda: {'status': 'ok', 'output': ''})
+
+    class MockN8nClient:
+        configured = False
+        async def get_failed_executions_summary(self): return {}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+
+    async def mock_redmine(owner):
+        return {'configured': True, 'needing_action_count': 2, 'tickets': [
+            {'id': 1, 'subject': 'Server down', 'status': 'New'},
+            {'id': 2, 'subject': 'Disk full', 'status': 'Feedback'},
+        ]}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._redmine_tickets_needing_action', mock_redmine)
+
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    brief = result['ops']
+    assert brief['redmine']['configured'] is True
+    assert brief['redmine']['needing_action_count'] == 2
+    assert len(brief['redmine']['tickets']) == 2
+
+
+@pytest.mark.asyncio
+async def test_daily_brief_includes_netbox_status(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._failed_cron_jobs', lambda owner: [])
+    monkeypatch.setattr('routes.openclaw_homelab_routes._disk_usage_summary', lambda: {'status': 'ok', 'filesystems': [], 'high_usage': []})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._netbox_sync_status', lambda: {
+        'status': 'degraded', 'output': '3 errors during last sync'
+    })
+
+    class MockN8nClient:
+        configured = False
+        async def get_failed_executions_summary(self): return {}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+
+    async def mock_redmine(owner): return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._redmine_tickets_needing_action', mock_redmine)
+
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    brief = result['ops']
+    assert brief['netbox']['status'] == 'degraded'
+    assert '3 errors' in brief['netbox']['output']
+
+
+@pytest.mark.asyncio
+async def test_daily_brief_redmine_not_configured_no_error(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._failed_cron_jobs', lambda owner: [])
+    monkeypatch.setattr('routes.openclaw_homelab_routes._disk_usage_summary', lambda: {'status': 'ok', 'filesystems': [], 'high_usage': []})
+    monkeypatch.setattr('routes.openclaw_homelab_routes._netbox_sync_status', lambda: {'status': 'ok', 'output': ''})
+
+    class MockN8nClient:
+        configured = False
+        async def get_failed_executions_summary(self): return {}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+
+    async def mock_redmine(owner): return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._redmine_tickets_needing_action', mock_redmine)
+
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['redmine']['configured'] is False
+    assert result['ops']['redmine']['needing_action_count'] == 0
+
+
+def test_disk_usage_summary_parses_df_output(monkeypatch):
+    df_output = (
+        "Filesystem      Size  Used Avail Use% Mounted on\n"
+        "/dev/sda1        50G   22G   26G  46% /\n"
+        "tmpfs           7.8G     0  7.8G   0% /dev/shm\n"
+        "/dev/sdb1       2.0T  1.6T  400G  81% /mnt/data\n"
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout: {'status': 'ok', 'returncode': 0, 'stdout': df_output, 'stderr': ''},
+    )
+    from routes.openclaw_homelab_routes import _disk_usage_summary
+    result = _disk_usage_summary()
+    assert result['status'] == 'ok'
+    mounts = {fs['mount'] for fs in result['filesystems']}
+    assert '/' in mounts
+    assert '/mnt/data' in mounts
+    assert '/dev/shm' not in mounts  # tmpfs filtered
+    high = [fs['mount'] for fs in result['high_usage']]
+    assert '/mnt/data' in high
+    assert '/' not in high
+
+
+def test_failed_cron_jobs_queries_db(tmp_path, monkeypatch):
+    import datetime
+    from routes.openclaw_homelab_routes import _failed_cron_jobs
+    from core.database import SessionLocal, ScheduledTask, TaskRun, Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(f'sqlite:///{tmp_path}/test.db')
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    task = ScheduledTask(id='t1', name='nightly-sync', owner='alice', status='active')
+    run = TaskRun(
+        id='r1', task_id='t1', status='error', error='timeout',
+        started_at=datetime.datetime.utcnow() - datetime.timedelta(hours=2),
+    )
+    db = TestSession()
+    db.add(task)
+    db.add(run)
+    db.commit()
+    db.close()
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes.SessionLocal', TestSession)
+    failures = _failed_cron_jobs('alice')
+    assert len(failures) == 1
+    assert failures[0]['task_name'] == 'nightly-sync'
+    assert failures[0]['error'] == 'timeout'
+
+
 # ---------------------------------------------------------------------------
 # Incident assistant
 # ---------------------------------------------------------------------------

@@ -58,13 +58,13 @@
   - [ ] Pause workflow by allowlist.
   - [ ] Backup n8n.
 
-- [ ] Daily ops briefing
-  - [ ] Unread urgent emails.
-  - [ ] Failed cron jobs.
-  - [ ] Docker unhealthy containers.
-  - [ ] Disk usage.
-  - [ ] Redmine tickets needing action.
-  - [ ] NetBox sync errors.
+- [x] Daily ops briefing
+  - [x] Unread urgent emails.
+  - [x] Failed cron jobs.
+  - [x] Docker unhealthy containers.
+  - [x] Disk usage.
+  - [x] Redmine tickets needing action.
+  - [x] NetBox sync errors.
   - [ ] Optional: weather, ADS-B, Telegram watcher status.
 
 - [ ] Local Mac automation
