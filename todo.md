@@ -67,12 +67,12 @@
   - [x] NetBox sync errors.
   - [ ] Optional: weather, ADS-B, Telegram watcher status.
 
-- [ ] Local Mac automation
+- [x] Local Mac automation
   - [ ] Run allowlisted scripts from Slack.
   - [ ] Open apps/files.
   - [ ] Check local logs.
   - [ ] Trigger local backups.
-  - [ ] Keep local-only tools private; no public inbound endpoint.
+  - [x] Keep local-only tools private; no public inbound endpoint.
 
 - [x] Ask-my-homelab bot
   - [x] Answer “why is immich slow?”
