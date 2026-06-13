@@ -145,12 +145,12 @@ Required for:
 Allows mutating homelab states, including container restarts and Redmine ticket creation.
 Required for:
 - `POST /api/openclaw/homelab/ops/docker-restart`
-- `POST /api/openclaw/events/{event_id}/redmine-ticket`
+- `POST /api/openclaw/homelab/events/{event_id}/redmine-ticket`
 
 ### `n8n:write`
 Allows mutating n8n states, such as rerunning failed executions.
 Required for:
-- `POST /api/openclaw/homelab/ops/n8n-rerun`
+- `POST /api/openclaw/n8n/ops/n8n-rerun`
 
 ## Workflow Allowlist
 
@@ -290,7 +290,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homel
 ```
 
 ### `POST /api/openclaw/homelab/ops/docker-restart`
-Restart a homelab container.
+Restart a homelab container. The container must match a `homelab_services.json` entry with `restart_allowed: true`.
 **Requires:** `homelab:write` and request body flag `"confirm": true`
 ```bash
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
@@ -298,22 +298,22 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
   http://localhost:7000/api/openclaw/homelab/ops/docker-restart
 ```
 
-### `POST /api/openclaw/homelab/ops/n8n-rerun`
-Rerun a failed n8n execution.
+### `POST /api/openclaw/n8n/ops/n8n-rerun`
+Scaffolded n8n rerun endpoint. It currently returns `501` until Odysseus has a real n8n rerun API implementation.
 **Requires:** `n8n:write` and request body flag `"confirm": true`
 ```bash
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"execution_id": "12345", "confirm": true}' \
-  http://localhost:7000/api/openclaw/homelab/ops/n8n-rerun
+  -d '{"workflow": "wf-1", "confirm": true}' \
+  http://localhost:7000/api/openclaw/n8n/ops/n8n-rerun
 ```
 
-### `POST /api/openclaw/events/{event_id}/redmine-ticket`
-Create a Redmine ticket tracking an event and attach its URL to the event.
+### `POST /api/openclaw/homelab/events/{event_id}/redmine-ticket`
+Create a Redmine ticket tracking an event through an explicit Converge service-token endpoint. Returns `501` unless `CONVERGE_TICKET_CREATE_PATH` is configured.
 **Requires:** `homelab:write` and request body flag `"confirm": true`
 ```bash
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"confirm": true}' \
-  http://localhost:7000/api/openclaw/events/<id>/redmine-ticket
+  http://localhost:7000/api/openclaw/homelab/events/<id>/redmine-ticket
 ```
 
 ## OpenClaw / Slack Command Reference
@@ -335,8 +335,8 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 | `ops n8n failures --record` | `POST /api/openclaw/n8n/failures/record` | `n8n:events` |
 | `ops daily brief` | `GET /api/openclaw/homelab/ops/daily-brief` | `homelab:read` |
 | `ops docker restart` | `POST /api/openclaw/homelab/ops/docker-restart` | `homelab:write` |
-| `ops n8n rerun` | `POST /api/openclaw/homelab/ops/n8n-rerun` | `n8n:write` |
-| `ops ticket` | `POST /api/openclaw/events/{event_id}/redmine-ticket` | `homelab:write` |
+| `ops n8n rerun` | `POST /api/openclaw/n8n/ops/n8n-rerun` | `n8n:write` |
+| `ops ticket` | `POST /api/openclaw/homelab/events/{event_id}/redmine-ticket` | `homelab:write` |
 
 ## Security Notes
 

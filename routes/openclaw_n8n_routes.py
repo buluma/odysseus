@@ -167,7 +167,7 @@ def setup_openclaw_n8n_routes() -> APIRouter:
             _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: not_configured")
             raise HTTPException(502, "n8n monitoring is not configured.")
 
-        _audit_write_action("n8n_rerun", body.workflow, owner, True, "success")
-        return _ok(message=f"Workflow {body.workflow} queued for rerun.") | {'workflow': body.workflow}
+        _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: not_implemented")
+        raise HTTPException(501, "n8n rerun is not implemented yet")
 
     return router

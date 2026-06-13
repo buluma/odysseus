@@ -194,6 +194,13 @@ def _docker_api_request(path: str, timeout: int = 8, method: str = 'GET') -> dic
             pass
 
 
+def _restartable_container(container: str) -> dict[str, Any] | None:
+    for service in _load_services():
+        if service.get('container') == container and service.get('restart_allowed') is True:
+            return service
+    return None
+
+
 def _docker_unhealthy_containers() -> dict[str, Any]:
     filters = urllib.parse.quote(json.dumps({'health': ['unhealthy']}))
     result = _docker_api_request(f'/containers/json?filters={filters}')
@@ -714,12 +721,21 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         if not re.match(r'^[A-Za-z0-9_-]+$', body.container):
             _audit_write_action("docker_restart", body.container, owner, True, "rejected_invalid_name")
             raise HTTPException(400, "Invalid container name format")
-        
-        result = _docker_api_request(f"/containers/{body.container}/restart", method="POST", timeout=30)
+
+        service = _restartable_container(body.container)
+        if not service:
+            _audit_write_action("docker_restart", body.container, owner, True, "rejected_not_allowlisted")
+            raise HTTPException(403, "Container restart is not allowlisted")
+
+        safe_container = urllib.parse.quote(body.container, safe='')
+        result = _docker_api_request(f"/containers/{safe_container}/restart", method="POST", timeout=30)
         
         if result.get('status') == 'ok' and result.get('http_status', 500) < 400:
             _audit_write_action("docker_restart", body.container, owner, True, "success")
-            return _ops_result('docker_restart', f"Container {body.container} restarted.", {'container': body.container})
+            return _ops_result('docker_restart', f"Container {body.container} restarted.", {
+                'container': body.container,
+                'service': service.get('name'),
+            })
         else:
             err = result.get('error') or result.get('body') or f"HTTP {result.get('http_status')}"
             _audit_write_action("docker_restart", body.container, owner, True, f"failed: {err}")
@@ -737,27 +753,42 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         event = store.get_event(event_id)
         if not event:
             raise HTTPException(404, "Event not found")
-            
+
+        create_path = (os.getenv("CONVERGE_TICKET_CREATE_PATH") or "").strip()
+        if not create_path:
+            _audit_write_action("create_redmine_ticket", event_id, owner, True, "failed: converge_create_not_configured")
+            raise HTTPException(501, "Converge ticket creation endpoint is not configured")
+
         from routes.openclaw_bridge_routes import _converge_config
         try:
             base_url, api_key = _converge_config()
+            if not create_path.startswith("/"):
+                create_path = "/" + create_path
             payload = {
-                "issue": {
-                    "project_id": 1,
-                    "subject": f"[{event.get('service')}] {event.get('title')}",
-                    "description": f"Event ID: {event_id}\nSeverity: {event.get('severity')}\n\n{event.get('summary')}",
-                    "priority_id": 4 if event.get('severity') == 'critical' else 2
-                }
+                "subject": f"[{event.get('service')}] {event.get('title')}",
+                "description": f"Event ID: {event_id}\nSeverity: {event.get('severity')}\n\n{event.get('summary')}",
+                "priority": "High" if event.get('severity') == 'critical' else "Normal",
+                "source": "odysseus_openclaw_homelab",
+                "source_event": _compact_event(event),
             }
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(f"{base_url}/issues.json", headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+                resp = await client.post(f"{base_url}{create_path}", headers={"X-API-Key": api_key}, json=payload)
                 if resp.status_code >= 400:
-                    raise Exception(f"Redmine returned HTTP {resp.status_code}: {resp.text[:200]}")
+                    raise Exception(f"Converge returned HTTP {resp.status_code}: {resp.text[:200]}")
                 data = resp.json()
-                issue_id = data.get('issue', {}).get('id')
+                if isinstance(data, dict):
+                    issue = data.get('issue') or {}
+                    issue_id = issue.get('id') or data.get('id')
+                    issue_url = issue.get('url') or data.get('url')
+                else:
+                    issue_id = None
+                    issue_url = None
                 
-                _audit_write_action("create_redmine_ticket", event_id, owner, True, "success", {"issue_id": issue_id})
-                return _ops_result('create_redmine_ticket', f"Ticket #{issue_id} created for event {event_id}.", {'issue_id': issue_id})
+                details = {"issue_id": issue_id}
+                if issue_url:
+                    details["url"] = issue_url
+                _audit_write_action("create_redmine_ticket", event_id, owner, True, "success", details)
+                return _ops_result('create_redmine_ticket', f"Ticket created for event {event_id}.", details)
         except Exception as exc:
             _audit_write_action("create_redmine_ticket", event_id, owner, True, f"failed: {exc}")
             raise HTTPException(500, f"Failed to create ticket: {exc}")

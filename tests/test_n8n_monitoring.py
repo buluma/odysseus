@@ -243,9 +243,8 @@ def test_openclaw_n8n_rerun_requires_confirm(client_with_scopes):
     assert "confirm=true" in resp.json()["detail"]
 
 
-def test_openclaw_n8n_rerun_success(client_with_scopes, mock_n8n_client):
+def test_openclaw_n8n_rerun_not_implemented(client_with_scopes, mock_n8n_client):
     c = client_with_scopes(["n8n:write"])
     resp = c.post("/api/openclaw/n8n/ops/n8n-rerun", json={"workflow": "wf-1", "confirm": True})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
-    assert resp.json()["workflow"] == "wf-1"
+    assert resp.status_code == 501
+    assert "not implemented" in resp.json()["detail"]

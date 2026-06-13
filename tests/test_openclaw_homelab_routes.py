@@ -52,7 +52,7 @@ def mock_event_store(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_homelab_scopes_registered_in_allowed_scopes():
-    for scope in ('homelab:read', 'events:read', 'events:write', 'events:ack', 'events:resolve'):
+    for scope in ('homelab:read', 'homelab:write', 'events:read', 'events:write', 'events:ack', 'events:resolve'):
         assert scope in ALLOWED_SCOPES, f'{scope} missing from ALLOWED_SCOPES'
 
 
@@ -60,6 +60,8 @@ def test_openclaw_bridge_profile_updated_with_homelab_scopes():
     profile = TOKEN_PROFILES['openclaw_bridge']
     for scope in ('homelab:read', 'events:read', 'events:ack', 'events:resolve'):
         assert scope in profile, f'{scope} missing from openclaw_bridge profile'
+    assert 'homelab:write' not in profile
+    assert 'n8n:write' not in profile
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +691,10 @@ async def test_docker_restart_requires_confirm(monkeypatch):
 async def test_docker_restart_success(monkeypatch):
     from routes.openclaw_homelab_routes import DockerRestartRequest
     monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'pihole', 'container': 'pihole', 'restart_allowed': True}],
+    )
+    monkeypatch.setattr(
         'routes.openclaw_homelab_routes._docker_api_request',
         lambda path, method, timeout: {'status': 'ok', 'http_status': 204}
     )
@@ -697,6 +703,27 @@ async def test_docker_restart_success(monkeypatch):
     result = await ep(_request(scopes=['homelab:write']), body=DockerRestartRequest(container='pihole', confirm=True))
     assert result['ops']['kind'] == 'docker_restart'
     assert result['ops']['container'] == 'pihole'
+    assert result['ops']['service'] == 'pihole'
+
+
+@pytest.mark.asyncio
+async def test_docker_restart_rejects_unallowlisted_container(monkeypatch):
+    from routes.openclaw_homelab_routes import DockerRestartRequest
+    calls = []
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'caddy', 'container': 'caddy', 'restart_allowed': False}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_api_request',
+        lambda path, method, timeout: calls.append(path) or {'status': 'ok', 'http_status': 204},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/docker-restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), body=DockerRestartRequest(container='caddy', confirm=True))
+    assert exc.value.status_code == 403
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -710,22 +737,40 @@ async def test_create_redmine_ticket_requires_confirm(mock_event_store):
 
 
 @pytest.mark.asyncio
-async def test_create_redmine_ticket_success(mock_event_store, monkeypatch):
+async def test_create_redmine_ticket_requires_configured_converge_create_path(mock_event_store):
     from routes.openclaw_homelab_routes import RedmineTicketRequest
     event = mock_event_store.record_event('source', 'svc', 'critical', 'Title', 'Sum', 'k')
-    
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/events/{event_id}/redmine-ticket', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=RedmineTicketRequest(confirm=True))
+    assert exc.value.status_code == 501
+
+
+@pytest.mark.asyncio
+async def test_create_redmine_ticket_uses_converge_service_endpoint(mock_event_store, monkeypatch):
+    from routes.openclaw_homelab_routes import RedmineTicketRequest
+    event = mock_event_store.record_event('source', 'svc', 'critical', 'Title', 'Sum', 'k')
+
     import httpx
+    seen = {}
+    monkeypatch.setenv('CONVERGE_TICKET_CREATE_PATH', '/api/external/ticket-requests')
     monkeypatch.setattr('routes.openclaw_bridge_routes._converge_config', lambda: ("http://base", "key"))
-    
+
     class MockResponse:
         status_code = 201
-        def json(self): return {"issue": {"id": 999}}
+        text = ''
+        def json(self): return {"issue": {"id": 999, "url": "http://base/issues/999"}}
         
     class MockAsyncClient:
         def __init__(self, **kwargs): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
-        async def post(self, url, headers=None, json=None): return MockResponse()
+        async def post(self, url, headers=None, json=None):
+            seen['url'] = url
+            seen['headers'] = headers
+            seen['json'] = json
+            return MockResponse()
 
     monkeypatch.setattr(httpx, 'AsyncClient', MockAsyncClient)
     router = setup_openclaw_homelab_routes()
@@ -733,6 +778,10 @@ async def test_create_redmine_ticket_success(mock_event_store, monkeypatch):
     result = await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=RedmineTicketRequest(confirm=True))
     assert result['ops']['kind'] == 'create_redmine_ticket'
     assert result['ops']['issue_id'] == 999
+    assert result['ops']['url'] == 'http://base/issues/999'
+    assert seen['url'] == 'http://base/api/external/ticket-requests'
+    assert seen['headers'] == {'X-API-Key': 'key'}
+    assert seen['json']['source_event']['id'] == event['id']
 
 
 # ---------------------------------------------------------------------------

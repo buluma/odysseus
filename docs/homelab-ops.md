@@ -2,7 +2,7 @@
 
 The Homelab Operations layer in Odysseus provides a secure, read-only interface for discovering and monitoring your personal homelab services. This allows Odysseus (and connected clients like OpenClaw) to act as a centralized dashboard for service health.
 
-*Note: Phase 1-3 provided read-only discovery, health checks, and event monitoring. Phase 4 introduces strict, scoped write operations (like restarting containers or resolving events), protected by explicit confirmation flags.*
+*Note: Phase 1-3 provided read-only discovery, health checks, and event monitoring. Phase 4 introduces scoped write operation scaffolding protected by explicit confirmation flags. Newly scaffolded integrations fail closed until their backend contract is configured.*
 
 ## Service Registry
 
@@ -29,17 +29,17 @@ Homelab services are defined in a JSON registry file.
 ## Security and Scopes
 
 Access to the Homelab API is protected by several scopes. Read-only APIs require `homelab:read`.
-Operations that mutate state require `homelab:write` (or `n8n:write` / `events:write` / `events:resolve`).
+Operations that mutate state require explicit write scopes such as `homelab:write`, `n8n:write`, `events:write`, or `events:resolve`. The default `openclaw_bridge` token profile does not include write scopes.
 
 - Container health checks use secure, structured commands (`docker inspect`) with strict shell execution disabled to prevent arbitrary code injection.
-- Odysseus will only query or restart containers explicitly listed in your `homelab_services.json` registry.
+- Odysseus will only query containers explicitly listed in your `homelab_services.json` registry. Restart is further restricted to services whose registry entry has `restart_allowed: true`.
 - All write operations require a strict `--confirm` gate to protect against accidental LLM hallucinations.
 
 ## Write Operations (Phase 4)
 Write operations provide restricted abilities to mutate homelab state. These APIs are exposed via the OpenClaw bridge rather than the core routes.
 - **Docker Restart**: Restarts a container associated with a registered homelab service. Requires `homelab:write`.
-- **N8N Rerun**: Reruns a failed N8N execution by ID. Requires `n8n:write`.
-- **Redmine Ticket**: Creates a Redmine ticket tracking a homelab event. Requires `homelab:write`.
+- **N8N Rerun**: Route is scaffolded but returns `501` until a real n8n rerun API call is implemented. Requires `n8n:write`.
+- **Redmine Ticket**: Route is scaffolded but returns `501` unless `CONVERGE_TICKET_CREATE_PATH` points at an explicit Converge service-token ticket creation endpoint. Requires `homelab:write`.
 
 For comprehensive OpenClaw API examples, see `docs/openclaw-bridge.md`.
 
@@ -132,4 +132,3 @@ Concurrent phase:  [check s1] [check s2] [check s3]  ← asyncio.gather
                         ↓
 Serial phase:      record s1 → record s2 → record s3  ← sequential loop
 ```
-
