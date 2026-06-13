@@ -673,6 +673,94 @@ async def test_daily_brief_endpoint(monkeypatch, mock_event_store):
 
 
 # ---------------------------------------------------------------------------
+# Incident assistant
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_record_incident_requires_events_write(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentAlertRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/record', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['events:read']), body=IncidentAlertRequest(service='immich'))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_record_incident_creates_durable_event(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentAlertRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/record', 'POST')
+    result = await ep(
+        _request(scopes=['events:write']),
+        body=IncidentAlertRequest(
+            source='grafana',
+            labels={'service': 'immich', 'alertname': 'ContainerDown'},
+            annotations={'description': 'immich container is down'},
+            metadata={'token': 'secret', 'container': 'immich'},
+        ),
+    )
+    assert result['status'] == 'ok'
+    assert result['event']['service'] == 'immich'
+    assert result['event']['summary'] == 'immich container is down'
+    assert 'diagnose' in result['event']['suggested_actions']
+    assert 'diagnose' in result['event']['links']
+    assert 'diagnose' in result['links']
+    stored = mock_event_store.get_event(result['event']['id'])
+    assert stored['metadata']['token'] == '***REDACTED***'
+
+
+@pytest.mark.asyncio
+async def test_diagnose_incident_requires_event_and_homelab_read(mock_event_store):
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'Container down', 'k')
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/diagnose', 'GET')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['events:read']), event_id=event['id'])
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_diagnose_incident_returns_logs_docker_caddy_and_restart_offer(mock_event_store, monkeypatch):
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'Container down', 'k')
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'immich', 'container': 'immich', 'url': 'https://immich.example', 'restart_allowed': True}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_container_logs',
+        lambda container, lines: {'logs': 'line1\nline2\nfatal error', 'check': {'status': 'ok'}},
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_container_inspect',
+        lambda container: {
+            'status': 'ok',
+            'container': container,
+            'state': {'status': 'exited', 'health': None},
+            'restart_count': 2,
+            'check': {'status': 'ok'},
+        },
+    )
+
+    async def fake_caddy(service):
+        return {'status': 'ok', 'host': 'immich.example', 'matched': True}
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes._caddy_route_probe', fake_caddy)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/diagnose', 'GET')
+    result = await ep(_request(scopes=['events:read', 'homelab:read']), event_id=event['id'])
+    ops = result['ops']
+    assert ops['kind'] == 'incident_diagnosis'
+    assert ops['container'] == 'immich'
+    assert ops['docker']['state']['status'] == 'exited'
+    assert ops['caddy']['matched'] is True
+    assert 'fatal error' in ops['logs']['logs']
+    assert ops['restart']['eligible'] is True
+    assert ops['restart']['requires_confirmation'] is True
+    assert 'Container state is exited.' in ops['summary']
+
+
+# ---------------------------------------------------------------------------
 # Write Ops
 # ---------------------------------------------------------------------------
 

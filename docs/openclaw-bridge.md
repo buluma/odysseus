@@ -289,6 +289,22 @@ Retrieves a consolidated summary of open inbox items, critical events, failing n
 curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/ops/daily-brief
 ```
 
+### `POST /api/openclaw/homelab/incidents/record`
+Record a Grafana/Prometheus/container-down alert as a durable homelab event.
+**Requires:** `events:write`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"source":"grafana","service":"immich","title":"Container down","summary":"immich is not running"}' \
+  http://localhost:7000/api/openclaw/homelab/incidents/record
+```
+
+### `GET /api/openclaw/homelab/incidents/{event_id}/diagnose`
+Build a Slack-readable diagnosis from recent safe evidence: registered container logs, Docker inspect state, Caddy route presence, and safe restart eligibility.
+**Requires:** `events:read` and `homelab:read`
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/incidents/<id>/diagnose
+```
+
 ### `POST /api/openclaw/homelab/ops/docker-restart`
 Restart a homelab container. The container must match a `homelab_services.json` entry with `restart_allowed: true`.
 **Requires:** `homelab:write` and request body flag `"confirm": true`
@@ -334,6 +350,8 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 | `ops n8n failures` | `GET /api/openclaw/n8n/failures` | `n8n:read` |
 | `ops n8n failures --record` | `POST /api/openclaw/n8n/failures/record` | `n8n:events` |
 | `ops daily brief` | `GET /api/openclaw/homelab/ops/daily-brief` | `homelab:read` |
+| `record incident` | `POST /api/openclaw/homelab/incidents/record` | `events:write` |
+| `diagnose incident` | `GET /api/openclaw/homelab/incidents/{event_id}/diagnose` | `events:read`, `homelab:read` |
 | `ops docker restart` | `POST /api/openclaw/homelab/ops/docker-restart` | `homelab:write` |
 | `ops n8n rerun` | `POST /api/openclaw/n8n/ops/n8n-rerun` | `n8n:write` |
 | `ops ticket` | `POST /api/openclaw/homelab/events/{event_id}/redmine-ticket` | `homelab:write` |

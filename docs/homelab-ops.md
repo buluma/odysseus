@@ -41,6 +41,14 @@ Write operations provide restricted abilities to mutate homelab state. These API
 - **N8N Rerun**: Route is scaffolded but returns `501` until a real n8n rerun API call is implemented. Requires `n8n:write`.
 - **Redmine Ticket**: Route is scaffolded but returns `501` unless `CONVERGE_TICKET_CREATE_PATH` points at an explicit Converge service-token ticket creation endpoint. Requires `homelab:write`.
 
+## Incident Assistant
+Incident Assistant endpoints let Grafana, Prometheus, or Slack turn alerts into durable events and ask for a compact diagnosis.
+
+- `POST /api/openclaw/homelab/incidents/record` records an incoming alert as a durable event. Requires `events:write`.
+- `GET /api/openclaw/homelab/incidents/{event_id}/diagnose` collects recent registered-container logs, Docker inspect state, Caddy route evidence, and safe restart eligibility. Requires both `events:read` and `homelab:read`.
+
+Diagnosis is read-only. If a service is marked `restart_allowed: true`, the response only reports restart eligibility and the confirmation command; it does not restart the service.
+
 For comprehensive OpenClaw API examples, see `docs/openclaw-bridge.md`.
 
 ## API Routes

@@ -13,7 +13,7 @@ def now_iso() -> str:
 
 _SAFE_EVENT_ACTIONS = {
     'ack', 'investigate', 'resolve', 'ignore', 'view_service',
-    'view_workflow', 'view_execution', 'record_event'
+    'view_workflow', 'view_execution', 'record_event', 'diagnose'
 }
 
 def _add_action_hints(event: dict) -> dict:
