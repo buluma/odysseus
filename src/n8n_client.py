@@ -92,6 +92,71 @@ class N8nClient:
             logger.error(f"n8n list_executions failed: {e}")
             raise N8nClientError(f"n8n list_executions failed: {e}") from e
 
+    async def get_workflow(self, workflow_id: str) -> Dict[str, Any]:
+        """Get a single workflow by ID."""
+        if not self.configured:
+            return {}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(
+                    f"{self.base_url}/api/v1/workflows/{workflow_id}",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.error("n8n get_workflow %s failed: %s", workflow_id, e)
+            raise N8nClientError(f"n8n get_workflow failed: {e}") from e
+
+    async def get_workflow_executions(self, workflow_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent executions for a specific workflow."""
+        if not self.configured:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(
+                    f"{self.base_url}/api/v1/executions",
+                    headers=self._headers(),
+                    params={"workflowId": workflow_id, "limit": limit},
+                )
+                resp.raise_for_status()
+                return resp.json().get("data", [])
+        except Exception as e:
+            logger.error("n8n get_workflow_executions %s failed: %s", workflow_id, e)
+            raise N8nClientError(f"n8n get_workflow_executions failed: {e}") from e
+
+    async def retry_execution(self, execution_id: str) -> Dict[str, Any]:
+        """Retry a failed execution by ID."""
+        if not self.configured:
+            raise N8nClientError("n8n is not configured")
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    f"{self.base_url}/api/v1/executions/{execution_id}/retry",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.error("n8n retry_execution %s failed: %s", execution_id, e)
+            raise N8nClientError(f"n8n retry_execution failed: {e}") from e
+
+    async def deactivate_workflow(self, workflow_id: str) -> Dict[str, Any]:
+        """Deactivate (pause) a workflow by ID."""
+        if not self.configured:
+            raise N8nClientError("n8n is not configured")
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    f"{self.base_url}/api/v1/workflows/{workflow_id}/deactivate",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            logger.error("n8n deactivate_workflow %s failed: %s", workflow_id, e)
+            raise N8nClientError(f"n8n deactivate_workflow failed: {e}") from e
+
     async def get_failed_executions_summary(self, limit: int = 10) -> Dict[str, Any]:
         """Get a summary of failed executions."""
         if not self.configured:

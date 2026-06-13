@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -18,9 +19,39 @@ BASE_URL = '/api/openclaw/n8n'
 
 _N8N_ALLOWED_ACTIONS = {'view_workflow', 'view_execution', 'record_event', 'ack', 'investigate', 'resolve', 'ignore'}
 
+
 def _safe_actions(actions: list[str]) -> list[str]:
     """Filter to only allowed actions before returning to OpenClaw."""
     return [a for a in actions if a in _N8N_ALLOWED_ACTIONS]
+
+
+def _workflow_allowed(name_or_id: str) -> bool:
+    """Check whether a workflow name or ID is in the N8N_WORKFLOW_ALLOWLIST."""
+    raw = (os.getenv("N8N_WORKFLOW_ALLOWLIST") or "").strip()
+    if not raw:
+        return False
+    allowed = {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+    if "*" in allowed:
+        return True
+    return name_or_id in allowed
+
+
+def _resolve_workflow(workflows: list[dict[str, Any]], name_or_id: str) -> dict[str, Any] | None:
+    """Find a workflow by exact ID or exact name match."""
+    for wf in workflows:
+        if wf.get("id") == name_or_id or wf.get("name") == name_or_id:
+            return wf
+    return None
+
+
+class N8nRerunRequest(BaseModel):
+    workflow: str
+    confirm: bool = False
+
+
+class N8nPauseRequest(BaseModel):
+    workflow: str
+    confirm: bool = False
 
 def setup_openclaw_n8n_routes() -> APIRouter:
     router = APIRouter(prefix=BASE_URL, tags=['openclaw-n8n'])
@@ -150,24 +181,138 @@ def setup_openclaw_n8n_routes() -> APIRouter:
             'links': {'health': f'{BASE_URL}/health', 'failures': f'{BASE_URL}/failures'}
         }
 
-    class N8nRerunRequest(BaseModel):
-        workflow: str
-        confirm: bool = False
+    @router.get('/workflows')
+    async def openclaw_n8n_list_workflows(request: Request) -> dict[str, Any]:
+        """List all n8n workflows with active status. Requires: n8n:read."""
+        _scope_owner(request, N8N_READ_SCOPES)
+        client = N8nClient()
+        if not client.configured:
+            return _ok(message="n8n monitoring is not configured.") | {'workflows': []}
+        try:
+            workflows = await client.list_workflows()
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
+        compacted = [
+            {'id': wf.get('id'), 'name': wf.get('name'), 'active': wf.get('active')}
+            for wf in workflows
+        ]
+        return _ok(message=f"{len(compacted)} workflow(s) found.") | {'workflows': compacted}
+
+    @router.get('/workflows/{workflow_id}/last-execution')
+    async def openclaw_n8n_last_execution(request: Request, workflow_id: str) -> dict[str, Any]:
+        """Get the most recent execution for a workflow. Requires: n8n:read."""
+        _scope_owner(request, N8N_READ_SCOPES)
+        client = N8nClient()
+        if not client.configured:
+            raise HTTPException(503, "n8n monitoring is not configured.")
+        try:
+            executions = await client.get_workflow_executions(workflow_id, limit=5)
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
+        if not executions:
+            raise HTTPException(404, f"No executions found for workflow {workflow_id!r}")
+        latest = executions[0]
+        return _ok(message=f"Last execution: {latest.get('status', 'unknown')} at {latest.get('startedAt', '?')}.") | {
+            'execution': {
+                'id': latest.get('id'),
+                'status': latest.get('status'),
+                'started_at': latest.get('startedAt'),
+                'stopped_at': latest.get('stoppedAt'),
+                'workflow_id': workflow_id,
+            }
+        }
 
     @router.post('/ops/n8n-rerun')
     async def openclaw_n8n_rerun(request: Request, body: N8nRerunRequest) -> dict[str, Any]:
-        """Rerun an n8n workflow. Requires: n8n:write and --confirm."""
+        """Retry the last failed execution of an allowlisted workflow. Requires: n8n:write + confirm."""
         owner = _scope_owner(request, N8N_WRITE_SCOPES)
         if not body.confirm:
             _audit_write_action("n8n_rerun", body.workflow, owner, False, "aborted_no_confirm")
             raise HTTPException(400, "Write action requires confirm=true")
+
+        if not _workflow_allowed(body.workflow):
+            _audit_write_action("n8n_rerun", body.workflow, owner, True, "rejected_not_allowlisted")
+            raise HTTPException(403, f"Workflow {body.workflow!r} is not in N8N_WORKFLOW_ALLOWLIST")
 
         client = N8nClient()
         if not client.configured:
             _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: not_configured")
             raise HTTPException(502, "n8n monitoring is not configured.")
 
-        _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: not_implemented")
-        raise HTTPException(501, "n8n rerun is not implemented yet")
+        try:
+            workflows = await client.list_workflows()
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
+
+        workflow = _resolve_workflow(workflows, body.workflow)
+        if not workflow:
+            _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: workflow_not_found")
+            raise HTTPException(404, f"Workflow {body.workflow!r} not found in n8n")
+
+        workflow_id = workflow["id"]
+        try:
+            executions = await client.get_workflow_executions(workflow_id, limit=10)
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
+
+        failed = next((e for e in executions if e.get("status") == "error"), None)
+        if not failed:
+            _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: no_failed_execution")
+            raise HTTPException(404, f"No failed execution found for workflow {body.workflow!r}")
+
+        execution_id = failed["id"]
+        try:
+            result = await client.retry_execution(execution_id)
+        except N8nClientError as e:
+            _audit_write_action("n8n_rerun", body.workflow, owner, True, f"failed: {e}")
+            raise HTTPException(502, str(e))
+
+        _audit_write_action("n8n_rerun", body.workflow, owner, True, "success", {"execution_id": execution_id})
+        return _ok(message=f"Rerun triggered for workflow {body.workflow!r} (execution {execution_id}).") | {
+            'workflow': body.workflow,
+            'retried_execution_id': execution_id,
+            'new_execution': result,
+        }
+
+    @router.post('/ops/n8n-pause')
+    async def openclaw_n8n_pause(request: Request, body: N8nPauseRequest) -> dict[str, Any]:
+        """Deactivate (pause) an allowlisted workflow. Requires: n8n:write + confirm."""
+        owner = _scope_owner(request, N8N_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("n8n_pause", body.workflow, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+
+        if not _workflow_allowed(body.workflow):
+            _audit_write_action("n8n_pause", body.workflow, owner, True, "rejected_not_allowlisted")
+            raise HTTPException(403, f"Workflow {body.workflow!r} is not in N8N_WORKFLOW_ALLOWLIST")
+
+        client = N8nClient()
+        if not client.configured:
+            _audit_write_action("n8n_pause", body.workflow, owner, True, "failed: not_configured")
+            raise HTTPException(502, "n8n monitoring is not configured.")
+
+        try:
+            workflows = await client.list_workflows()
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
+
+        workflow = _resolve_workflow(workflows, body.workflow)
+        if not workflow:
+            _audit_write_action("n8n_pause", body.workflow, owner, True, "failed: workflow_not_found")
+            raise HTTPException(404, f"Workflow {body.workflow!r} not found in n8n")
+
+        workflow_id = workflow["id"]
+        try:
+            result = await client.deactivate_workflow(workflow_id)
+        except N8nClientError as e:
+            _audit_write_action("n8n_pause", body.workflow, owner, True, f"failed: {e}")
+            raise HTTPException(502, str(e))
+
+        _audit_write_action("n8n_pause", body.workflow, owner, True, "success")
+        return _ok(message=f"Workflow {body.workflow!r} deactivated.") | {
+            'workflow': body.workflow,
+            'workflow_id': workflow_id,
+            'active': result.get('active', False),
+        }
 
     return router

@@ -50,13 +50,13 @@
   - [ ] Post sync summaries.
   - [ ] Return created/updated/error counts.
 
-- [ ] n8n mobile control layer
+- [x] n8n mobile control layer
   - [x] Add Slack route coverage for n8n health and failed workflows.
-  - [ ] Configure Heimdal n8n API env.
-  - [ ] Show last execution.
-  - [ ] Rerun workflow by allowlist.
-  - [ ] Pause workflow by allowlist.
-  - [ ] Backup n8n.
+  - [x] Configure Heimdal n8n API env.
+  - [x] Show last execution.
+  - [x] Rerun workflow by allowlist.
+  - [x] Pause workflow by allowlist.
+  - [x] Backup n8n.
 
 - [x] Daily ops briefing
   - [x] Unread urgent emails.
