@@ -40,11 +40,14 @@ async function _action(eventId, verb) {
 // ---- Rail badge ----
 
 function _updateRailBadge(events) {
-  const btn = document.getElementById(RAIL_ID);
-  if (!btn) return;
   const openCount = events.filter(e => ['new', 'acknowledged', 'investigating'].includes(e.status)).length;
-  btn.classList.toggle('rail-notify', openCount > 0);
-  btn.title = openCount > 0 ? `Events (${openCount} open)` : 'Events';
+  const railBtn = document.getElementById(RAIL_ID);
+  if (railBtn) {
+    railBtn.classList.toggle('rail-notify', openCount > 0);
+    railBtn.title = openCount > 0 ? `Events (${openCount} open)` : 'Events';
+  }
+  const dot = document.getElementById('events-notif-dot');
+  if (dot) dot.style.display = openCount > 0 ? '' : 'none';
 }
 
 // ---- Render ----

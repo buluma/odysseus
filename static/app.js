@@ -877,6 +877,15 @@ function initializeEventListeners() {
     });
   }
 
+  // Events tool button
+  const toolEventsBtn = el('tool-events-btn');
+  if (toolEventsBtn) {
+    toolEventsBtn.addEventListener('click', () => {
+      if (eventsModule.isEventsOpen()) eventsModule.closeEvents();
+      else eventsModule.openEvents();
+    });
+  }
+
   // Tasks tool button
   const toolTasksBtn = el('tool-tasks-btn');
   if (toolTasksBtn) {

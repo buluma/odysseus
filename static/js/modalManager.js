@@ -1399,7 +1399,7 @@ const _AUTO_WIRE = {
   'calendar-modal':       { rail: 'rail-calendar',  sidebar: 'tool-calendar-btn' },
   'gallery-modal':        { rail: 'rail-gallery',   sidebar: 'tool-gallery-btn' },
   'tasks-modal':          { rail: 'rail-tasks',     sidebar: 'tool-tasks-btn' },
-  'events-modal':         { rail: 'rail-events',    sidebar: null },
+  'events-modal':         { rail: 'rail-events',    sidebar: 'tool-events-btn' },
   'doclib-modal':         { rail: 'rail-archive',   sidebar: 'tool-library-btn' },
   'memory-modal':         { rail: null,             sidebar: 'tool-memory-btn' },
   'notes-panel':          { rail: 'rail-notes',     sidebar: 'tool-notes-btn' },
