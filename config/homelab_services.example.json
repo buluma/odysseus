@@ -22,5 +22,17 @@
       "tags": ["media", "streaming"],
       "restart_allowed": false
     }
+  ],
+  "backup_jobs": [
+    {
+      "name": "n8n",
+      "description": "Export n8n workflows and credentials to /backup/",
+      "script": "/opt/scripts/backup-n8n.sh"
+    },
+    {
+      "name": "database",
+      "description": "Dump app database",
+      "command": ["pg_dump", "-Fc", "app", "-f", "/backup/app.dump"]
+    }
   ]
 }

@@ -2,7 +2,7 @@
 
 ## Active Priorities
 
-- [ ] Inbox triage with Slack actions
+- [x] Inbox triage with Slack actions
   - [x] Reuse Odysseus `check_email_urgency` scanner instead of building a second classifier.
   - [x] Allow Slack to trigger the urgent inbox scan on demand.
   - [x] Expose urgent-email triage items to Slack with concise action commands.
@@ -15,7 +15,7 @@
   - [x] Store action state so repeated urgent-email alerts do not spam Slack.
   - [x] Gate Redmine creation behind explicit confirmation.
 
-- [ ] Slack-controlled homelab ops
+- [x] Slack-controlled homelab ops
   - [x] Add Slack command routing for homelab health, services, events, n8n health, and n8n failures.
   - [ ] Add safe read-only commands:
     - [x] `docker ps unhealthy`
@@ -24,8 +24,8 @@
     - [x] `check grafana`
     - [x] `tail caddy logs`
     - [x] `disk usage`
-  - [ ] Add restart command support only for an explicit safe-service allowlist.
-  - [ ] Add backup command support only for explicit jobs such as `backup n8n`.
+  - [x] Add restart command support only for an explicit safe-service allowlist.
+  - [x] Add backup command support only for explicit jobs such as `backup n8n`.
 
 - [ ] Incident assistant
   - [x] Convert Grafana/Prometheus/container-down alerts into durable Odysseus events.

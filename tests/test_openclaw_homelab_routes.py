@@ -68,7 +68,7 @@ def test_openclaw_bridge_profile_updated_with_homelab_scopes():
 # _safe_actions – no destructive verbs (allowlist)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('forbidden', ['restart', 'restart_service', 'shell', 'exec', 'delete', 'workflow', 'unknown'])
+@pytest.mark.parametrize('forbidden', ['restart', 'shell', 'exec', 'delete', 'workflow', 'unknown'])
 def test_safe_actions_strips_forbidden(forbidden):
     actions = ['ack', 'investigate', forbidden, 'view_service']
     result = _safe_actions(actions)
@@ -918,3 +918,257 @@ async def test_persistence_failure_returns_500(mock_event_store, monkeypatch):
         with pytest.raises(HTTPException) as exc:
             await ep(req, event_id=e['id'])
         assert exc.value.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# Incident restart – allowlist enforcement
+# ---------------------------------------------------------------------------
+
+def test_restart_service_action_in_allowed_actions():
+    from routes.openclaw_homelab_routes import _ALLOWED_ACTIONS
+    assert 'restart_service' in _ALLOWED_ACTIONS
+
+
+def test_event_links_includes_restart():
+    from routes.openclaw_homelab_routes import _event_links
+    links = _event_links('evt-abc')
+    assert 'restart' in links
+    assert 'evt-abc' in links['restart']
+
+
+@pytest.mark.asyncio
+async def test_diagnose_restart_offer_includes_link(mock_event_store, monkeypatch):
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'Container down', 'k')
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'immich', 'container': 'immich', 'url': 'https://immich.example', 'restart_allowed': True}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_container_logs',
+        lambda container, lines: {'logs': '', 'check': {'status': 'ok'}},
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_container_inspect',
+        lambda container: {'status': 'ok', 'container': container, 'state': {'status': 'running', 'health': 'healthy'}, 'restart_count': 0, 'check': {'status': 'ok'}},
+    )
+
+    async def fake_caddy(service):
+        return {'status': 'ok', 'matched': True}
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes._caddy_route_probe', fake_caddy)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/diagnose', 'GET')
+    result = await ep(_request(scopes=['events:read', 'homelab:read']), event_id=event['id'])
+    restart = result['ops']['restart']
+    assert restart['eligible'] is True
+    assert 'link' in restart
+    assert '/incidents/' in restart['link']
+    assert '/restart' in restart['link']
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_requires_confirm(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'down', 'k')
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=IncidentRestartRequest(confirm=False))
+    assert exc.value.status_code == 400
+    assert 'confirm=true' in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_requires_homelab_write_scope(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'down', 'k')
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:read']), event_id=event['id'], body=IncidentRestartRequest(confirm=True))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_event_not_found(mock_event_store):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id='no-such-event', body=IncidentRestartRequest(confirm=True))
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_no_registered_container(mock_event_store, monkeypatch):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    event = mock_event_store.record_event('grafana', 'unknown-svc', 'critical', 'Down', 'down', 'k')
+    monkeypatch.setattr('routes.openclaw_homelab_routes._load_services', lambda: [])
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=IncidentRestartRequest(confirm=True))
+    assert exc.value.status_code == 403
+    assert 'container' in exc.value.detail.lower() or 'allowlist' in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_container_not_allowlisted(mock_event_store, monkeypatch):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    event = mock_event_store.record_event('grafana', 'caddy', 'critical', 'Down', 'down', 'k')
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'caddy', 'container': 'caddy', 'restart_allowed': False}],
+    )
+    docker_calls = []
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_api_request',
+        lambda path, method, timeout: docker_calls.append(path) or {'status': 'ok', 'http_status': 204},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=IncidentRestartRequest(confirm=True))
+    assert exc.value.status_code == 403
+    assert docker_calls == []
+
+
+@pytest.mark.asyncio
+async def test_incident_restart_success(mock_event_store, monkeypatch):
+    from routes.openclaw_homelab_routes import IncidentRestartRequest
+    event = mock_event_store.record_event('grafana', 'immich', 'critical', 'Down', 'down', 'k')
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'immich', 'container': 'immich', 'restart_allowed': True}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_api_request',
+        lambda path, method, timeout: {'status': 'ok', 'http_status': 204},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/incidents/{event_id}/restart', 'POST')
+    result = await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=IncidentRestartRequest(confirm=True))
+    assert result['ops']['kind'] == 'incident_restart'
+    assert result['ops']['container'] == 'immich'
+    assert result['ops']['service'] == 'immich'
+    assert result['ops']['event_id'] == event['id']
+
+
+# ---------------------------------------------------------------------------
+# Backup jobs
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_backup_job_requires_confirm(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_backup_jobs',
+        lambda: [{'name': 'n8n', 'script': '/opt/backup/n8n.sh'}],
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), job_name='n8n', body=BackupJobRequest(confirm=False))
+    assert exc.value.status_code == 400
+    assert 'confirm=true' in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_backup_job_requires_homelab_write_scope(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_backup_jobs',
+        lambda: [{'name': 'n8n', 'script': '/opt/backup/n8n.sh'}],
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:read']), job_name='n8n', body=BackupJobRequest(confirm=True))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_backup_job_not_found(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    monkeypatch.setattr('routes.openclaw_homelab_routes._load_backup_jobs', lambda: [])
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), job_name='unknown', body=BackupJobRequest(confirm=True))
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_backup_job_script_success(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_backup_jobs',
+        lambda: [{'name': 'n8n', 'description': 'Backup n8n', 'script': '/opt/backup/n8n.sh'}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout: {'status': 'ok', 'returncode': 0, 'stdout': 'done', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    result = await ep(_request(scopes=['homelab:write']), job_name='n8n', body=BackupJobRequest(confirm=True))
+    assert result['ops']['kind'] == 'backup'
+    assert result['ops']['job'] == 'n8n'
+    assert result['ops']['check']['status'] == 'ok'
+
+
+@pytest.mark.asyncio
+async def test_backup_job_command_list_success(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    captured = {}
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_backup_jobs',
+        lambda: [{'name': 'db', 'command': ['pg_dump', '-Fc', 'mydb', '-f', '/backup/db.dump']}],
+    )
+    def fake_run(args, timeout):
+        captured['args'] = args
+        return {'status': 'ok', 'returncode': 0, 'stdout': '', 'stderr': ''}
+    monkeypatch.setattr('routes.openclaw_homelab_routes._run_static_command', fake_run)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    result = await ep(_request(scopes=['homelab:write']), job_name='db', body=BackupJobRequest(confirm=True))
+    assert result['ops']['job'] == 'db'
+    assert captured['args'] == ['pg_dump', '-Fc', 'mydb', '-f', '/backup/db.dump']
+
+
+@pytest.mark.asyncio
+async def test_backup_job_nonzero_exit_returns_500(monkeypatch):
+    from routes.openclaw_homelab_routes import BackupJobRequest
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_backup_jobs',
+        lambda: [{'name': 'n8n', 'script': '/opt/backup/n8n.sh'}],
+    )
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout: {'status': 'degraded', 'returncode': 1, 'stdout': '', 'stderr': 'permission denied'},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/backup/{job_name}', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), job_name='n8n', body=BackupJobRequest(confirm=True))
+    assert exc.value.status_code == 500
+
+
+def test_load_backup_jobs_returns_backup_jobs_list(tmp_path, monkeypatch):
+    import json
+    config = tmp_path / 'homelab_services.json'
+    config.write_text(json.dumps({
+        'services': [{'name': 'caddy', 'container': 'caddy'}],
+        'backup_jobs': [{'name': 'n8n', 'script': '/opt/backup/n8n.sh'}],
+    }))
+    monkeypatch.setattr('routes.homelab_routes._SERVICES_CONFIG_PATH', str(config))
+    from routes.homelab_routes import _load_backup_jobs
+    jobs = _load_backup_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]['name'] == 'n8n'
+
+
+def test_load_backup_jobs_missing_config_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr('routes.homelab_routes._SERVICES_CONFIG_PATH', str(tmp_path / 'no_such.json'))
+    from routes.homelab_routes import _load_backup_jobs
+    assert _load_backup_jobs() == []

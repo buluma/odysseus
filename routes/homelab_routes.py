@@ -31,16 +31,30 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
     return require_user(request)
 
 
+_SERVICES_CONFIG_PATH = os.path.join('config', 'homelab_services.json')
+
+
 def _load_services() -> List[Dict[str, Any]]:
-    config_path = os.path.join('config', 'homelab_services.json')
-    if not os.path.exists(config_path):
+    if not os.path.exists(_SERVICES_CONFIG_PATH):
         return []
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(_SERVICES_CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
             return data.get('services', [])
     except Exception as e:
         logger.error(f'Failed to load homelab services config: {e}')
+        return []
+
+
+def _load_backup_jobs() -> List[Dict[str, Any]]:
+    if not os.path.exists(_SERVICES_CONFIG_PATH):
+        return []
+    try:
+        with open(_SERVICES_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get('backup_jobs', [])
+    except Exception as e:
+        logger.error(f'Failed to load backup jobs config: {e}')
         return []
 
 

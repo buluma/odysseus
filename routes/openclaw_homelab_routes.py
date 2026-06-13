@@ -24,6 +24,12 @@ class DockerRestartRequest(BaseModel):
     container: str
     confirm: bool = False
 
+class IncidentRestartRequest(BaseModel):
+    confirm: bool = False
+
+class BackupJobRequest(BaseModel):
+    confirm: bool = False
+
 class RedmineTicketRequest(BaseModel):
     confirm: bool = False
 
@@ -49,6 +55,7 @@ from routes.homelab_routes import (
     HOMELAB_WRITE_SCOPES,
     EVENTS_WRITE_SCOPES,
     _load_services,
+    _load_backup_jobs,
     execute_health_checks,
     _has_scope,
     _scope_owner,
@@ -64,7 +71,8 @@ EVENTS_RESOLVE_SCOPES = {'events:resolve'}
 # Actions that may appear in OpenClaw responses.
 _ALLOWED_ACTIONS = {
     'ack', 'investigate', 'resolve', 'ignore', 'view_service',
-    'view_workflow', 'view_execution', 'record_event', 'diagnose'
+    'view_workflow', 'view_execution', 'record_event', 'diagnose',
+    'restart_service',
 }
 
 BASE_URL = '/api/openclaw/homelab'
@@ -415,6 +423,7 @@ def _event_links(event_id: str) -> dict[str, str]:
         'resolve': f'{BASE_URL}/events/{event_id}/resolve',
         'ignore': f'{BASE_URL}/events/{event_id}/ignore',
         'diagnose': f'{BASE_URL}/incidents/{event_id}/diagnose',
+        'restart': f'{BASE_URL}/incidents/{event_id}/restart',
     }
 
 
@@ -510,6 +519,7 @@ async def _diagnose_event(event: dict[str, Any]) -> dict[str, Any]:
                 'service': restart_service.get('name'),
                 'requires_confirmation': True,
                 'command': f'restart service {restart_service.get("name")}',
+                'link': f'{BASE_URL}/incidents/{event["id"]}/restart',
             }
     caddy = await _caddy_route_probe(service)
     findings = []
@@ -934,6 +944,55 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             _audit_write_action("docker_restart", body.container, owner, True, f"failed: {err}")
             raise HTTPException(500, f"Failed to restart container: {err}")
 
+    @router.post('/ops/backup/{job_name}')
+    async def openclaw_run_backup(
+        request: Request, job_name: str, body: BackupJobRequest
+    ) -> dict[str, Any]:
+        """Run a named backup job from the allowlist.
+
+        Requires: homelab:write + confirm=true. Job must exist in backup_jobs
+        config (backup_jobs list in homelab_services.json).
+        """
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action('backup', job_name, owner, False, 'aborted_no_confirm')
+            raise HTTPException(400, 'Write action requires confirm=true')
+
+        jobs = _load_backup_jobs()
+        job = next((j for j in jobs if j.get('name') == job_name), None)
+        if not job:
+            _audit_write_action('backup', job_name, owner, True, 'rejected_not_found')
+            raise HTTPException(404, f'Backup job {job_name!r} not found in allowlist')
+
+        command: list[str] | None = job.get('command')
+        script: str | None = job.get('script')
+        if command:
+            if not isinstance(command, list) or not command:
+                _audit_write_action('backup', job_name, owner, True, 'rejected_invalid_command')
+                raise HTTPException(500, f'Backup job {job_name!r} has an invalid command configuration')
+            args = [str(a) for a in command]
+        elif script:
+            if not str(script).startswith('/'):
+                _audit_write_action('backup', job_name, owner, True, 'rejected_relative_script')
+                raise HTTPException(500, f'Backup job {job_name!r} script must be an absolute path')
+            args = [str(script)]
+        else:
+            _audit_write_action('backup', job_name, owner, True, 'rejected_no_command')
+            raise HTTPException(500, f'Backup job {job_name!r} has no command or script configured')
+
+        result = _run_static_command(args, timeout=120)
+        if result.get('status') == 'ok':
+            _audit_write_action('backup', job_name, owner, True, 'success')
+            return _ops_result('backup', f'Backup job {job_name!r} completed.', {
+                'job': job_name,
+                'description': job.get('description'),
+                'check': result,
+            })
+        else:
+            err = result.get('error') or result.get('stderr') or f"exit {result.get('returncode')}"
+            _audit_write_action('backup', job_name, owner, True, f'failed: {err}')
+            raise HTTPException(500, f'Backup job {job_name!r} failed: {err}')
+
     @router.post('/events/{event_id}/redmine-ticket')
     async def openclaw_create_redmine_ticket(request: Request, event_id: str, body: RedmineTicketRequest) -> dict[str, Any]:
         """Create a Redmine ticket from a homelab event. Requires: homelab:write and --confirm."""
@@ -1045,6 +1104,50 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             f'Incident diagnosis ready for {event.get("service")}.',
             diagnosis,
         )
+
+    @router.post('/incidents/{event_id}/restart')
+    async def openclaw_restart_incident_service(
+        request: Request, event_id: str, body: IncidentRestartRequest
+    ) -> dict[str, Any]:
+        """Restart the container associated with an incident event.
+
+        Requires: homelab:write + confirm=true. Container must be in the
+        restart allowlist (restart_allowed=true in services config).
+        """
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action('incident_restart', event_id, owner, False, 'aborted_no_confirm')
+            raise HTTPException(400, 'Write action requires confirm=true')
+
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, 'Event not found')
+
+        container, service = _event_container(event)
+        if not container:
+            _audit_write_action('incident_restart', event_id, owner, True, 'rejected_no_container')
+            raise HTTPException(403, 'No registered container found for this event; cannot restart')
+
+        restart_service = _restartable_container(container)
+        if not restart_service:
+            _audit_write_action('incident_restart', event_id, owner, True, 'rejected_not_allowlisted')
+            raise HTTPException(403, f'Container {container!r} restart is not allowlisted')
+
+        safe_container = urllib.parse.quote(container, safe='')
+        result = _docker_api_request(f'/containers/{safe_container}/restart', method='POST', timeout=30)
+        if result.get('status') == 'ok' and result.get('http_status', 500) < 400:
+            _audit_write_action('incident_restart', event_id, owner, True, 'success',
+                                {'container': container, 'service': restart_service.get('name')})
+            return _ops_result('incident_restart', f'Container {container} restarted.', {
+                'event_id': event_id,
+                'container': container,
+                'service': restart_service.get('name'),
+            })
+        else:
+            err = result.get('error') or result.get('body') or f"HTTP {result.get('http_status')}"
+            _audit_write_action('incident_restart', event_id, owner, True, f'failed: {err}')
+            raise HTTPException(500, f'Failed to restart container: {err}')
 
     @router.get('/events')
     async def openclaw_list_events(
