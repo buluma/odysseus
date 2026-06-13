@@ -5719,6 +5719,26 @@ async function _cmdHelp(args, ctx) {
 
 // ── Homelab / n8n / Redmine slash handlers ────────────────────────
 
+async function _cmdHomelabAsk(args, ctx) {
+  const question = args.join(' ').trim();
+  if (!question) { slashReply('Usage: /homelab ask <question>'); return true; }
+  slashReply(`Asking about your homelab: <em>${ctx.esc(question)}</em>`);
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/homelab/ask`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Error ${res.status}: ${ctx.esc(d?.detail || 'unknown')}`); return true; }
+    slashReply(ctx.esc(d.answer || '(no answer)').replace(/\n/g, '<br>'));
+  } catch (e) {
+    slashReply(`Homelab ask failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
 async function _cmdHomelabHealth(args, ctx) {
   slashReply('Checking homelab…');
   try {
@@ -6254,11 +6274,12 @@ const COMMANDS = {
   homelab: {
     alias: ['hl'],
     category: 'Tools',
-    help: 'Homelab status — bridge health and Converge',
+    help: 'Homelab status and Q&A — health, Converge, ask',
     default: 'health',
     subs: {
-      health:  { handler: _cmdHomelabHealth,   alias: [], help: 'Bridge health check',   usage: '/homelab health' },
-      converge: { handler: _cmdHomelabConverge, alias: [], help: 'Converge/Redmine health', usage: '/homelab converge' },
+      health:   { handler: _cmdHomelabHealth,   alias: [],    help: 'Bridge health check',                    usage: '/homelab health' },
+      converge: { handler: _cmdHomelabConverge, alias: [],    help: 'Converge/Redmine health',               usage: '/homelab converge' },
+      ask:      { handler: _cmdHomelabAsk,      alias: ['q'], help: 'Ask a question about your homelab',     usage: '/homelab ask why is immich slow?' },
     },
   },
   tickets: {

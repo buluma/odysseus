@@ -6,6 +6,7 @@ and event lifecycle.  No restart actions, no shell execution.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import json
@@ -33,6 +34,9 @@ class BackupJobRequest(BaseModel):
 
 class RedmineTicketRequest(BaseModel):
     confirm: bool = False
+
+class HomelabAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
 
 class IncidentAlertRequest(BaseModel):
     source: str = "external_alert"
@@ -62,6 +66,9 @@ from routes.homelab_routes import (
     _scope_owner,
 )
 from src.event_store import EventStore
+from src.n8n_client import N8nClient
+from src.llm_core import llm_call_async
+from src.endpoint_resolver import resolve_endpoint
 from core.database import SessionLocal, ScheduledTask, TaskRun
 
 logger = logging.getLogger(__name__)
@@ -771,6 +778,102 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         }
 
         return _ops_result('daily_brief', "Daily briefing aggregated successfully.", brief)
+
+    @router.post('/ask')
+    async def openclaw_homelab_ask(request: Request, body: HomelabAskRequest) -> dict[str, Any]:
+        """Answer a natural-language question about the homelab using a live snapshot as context.
+
+        Gathers health, disk, tailscale, open events, and n8n data in parallel,
+        injects them into an LLM system prompt, and returns the synthesised answer.
+        Requires: homelab:read
+        """
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+
+        # Resolve LLM endpoint before doing expensive I/O so we fail fast.
+        try:
+            ep_url, ep_model, ep_headers = resolve_endpoint('utility', owner=owner)
+        except Exception:
+            try:
+                ep_url, ep_model, ep_headers = resolve_endpoint('default', owner=owner)
+            except Exception as exc:
+                raise HTTPException(503, f"No model endpoint configured: {exc}")
+
+        # Gather snapshot in parallel.
+        services = _load_services()
+        n8n_client = N8nClient()
+
+        async def _n8n_summary():
+            if not n8n_client.configured:
+                return {}
+            return await n8n_client.get_failed_executions_summary()
+
+        health_task = asyncio.ensure_future(
+            execute_health_checks(services, record_events=False, owner=owner, source_name='homelab_ask')
+        )
+        n8n_task = asyncio.ensure_future(_n8n_summary())
+
+        health_results, _, overall = await health_task
+        n8n_summary = await n8n_task
+
+        disk = _disk_usage_summary()
+        tailscale = _tailscale_status()
+        store = EventStore()
+        open_events = store.get_events(status='open')
+
+        # Build compact context block for the system prompt.
+        unhealthy = [r for r in health_results if r.get('status') != 'ok']
+        disk_lines = [
+            f"  {fs['mount']}: {fs['use_percent']}% used, {fs['avail']} free"
+            for fs in disk.get('filesystems', [])
+        ]
+        event_lines = [
+            f"  [{e.get('severity','?')}] {e.get('title','?')}"
+            for e in open_events[:10]
+        ]
+        n8n_failed = n8n_summary.get('failed_count') or 0
+
+        context = "\n".join([
+            "=== HOMELAB SNAPSHOT ===",
+            f"Service health: {overall} ({len(unhealthy)} unhealthy of {len(health_results)})",
+        ] + (
+            [f"  Unhealthy: {', '.join(r['name'] for r in unhealthy)}"] if unhealthy else []
+        ) + [
+            "",
+            "Disk:",
+        ] + (disk_lines or ["  (unavailable)"]) + [
+            "",
+            f"Tailscale: {tailscale.get('status','?')} — {(tailscale.get('tailscale') or {}).get('peer_count', '?')} peer(s)",
+            "",
+            f"Open events ({len(open_events)}):",
+        ] + (event_lines or ["  (none)"]) + [
+            "",
+            f"n8n: {n8n_failed} failed workflow execution(s)." if n8n_client.configured else "n8n: not configured.",
+            "=== END SNAPSHOT ===",
+        ])
+
+        system_prompt = (
+            "You are a homelab operations assistant with read-only access to live system data. "
+            "Answer the user's question concisely using only the snapshot below. "
+            "If the data does not contain enough information to answer, say so.\n\n"
+            + context
+        )
+
+        answer = await llm_call_async(
+            ep_url,
+            ep_model,
+            [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': body.question},
+            ],
+            headers=ep_headers,
+            prompt_type='homelab_ask',
+        )
+
+        return {
+            'status': 'ok',
+            'question': body.question,
+            'answer': answer,
+        }
 
     # ------------------------------------------------------------------
     # Service read routes
