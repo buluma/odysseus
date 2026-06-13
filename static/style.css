@@ -36733,3 +36733,45 @@ body.theme-frosted .modal {
 }
 .ev-action-resolve { color: var(--color-success, #4caf50); border-color: var(--color-success, #4caf50); }
 .ev-action-ignore  { color: var(--fg); opacity: 0.35; }
+
+/* ---- Events panel: timeline ---- */
+.ev-timeline-toggle {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.4;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  transition: opacity 0.15s;
+}
+.ev-timeline-toggle:hover { opacity: 0.8; }
+.ev-timeline-toggle svg { transition: transform 0.2s; }
+.ev-timeline-toggle.ev-timeline-open svg { transform: rotate(180deg); }
+.ev-timeline {
+  margin-top: 6px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ev-tl-entry {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  gap: 6px;
+  font-size: 11px;
+  align-items: baseline;
+}
+.ev-tl-action {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.7;
+}
+.ev-tl-detail { opacity: 0.6; }
+.ev-tl-time { opacity: 0.35; white-space: nowrap; }

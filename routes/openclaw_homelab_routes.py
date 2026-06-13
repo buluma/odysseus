@@ -67,6 +67,7 @@ from routes.homelab_routes import (
 )
 from src.event_store import EventStore
 from src.n8n_client import N8nClient
+from src.slack_notify import notify_new_event
 from src.llm_core import llm_call_async
 from src.endpoint_resolver import resolve_endpoint
 from core.database import SessionLocal, ScheduledTask, TaskRun
@@ -1291,6 +1292,8 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             )
         except IOError as exc:
             raise HTTPException(500, f'Persistence error: {exc}')
+        if event.get("count", 1) == 1:
+            notify_new_event(event)
         return _ok(
             message=f'Incident recorded for {service}.',
             event=_compact_event(event),

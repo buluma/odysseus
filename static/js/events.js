@@ -105,6 +105,23 @@ function _renderList(modal) {
          <button class="ev-action-btn ev-action-resolve" data-ev="${ev.id}" data-verb="resolve" title="Resolve">DONE</button>
          <button class="ev-action-btn ev-action-ignore" data-ev="${ev.id}" data-verb="ignore" title="Ignore">IGN</button>`
       : '';
+    const timeline = (ev.timeline || []);
+    const timelineHtml = timeline.length
+      ? `<div class="ev-timeline hidden" id="ev-tl-${ev.id}">
+          ${timeline.map(t => `
+            <div class="ev-tl-entry">
+              <span class="ev-tl-action">${_esc(t.action || '')}</span>
+              <span class="ev-tl-detail">${_esc(t.details || '')}</span>
+              <span class="ev-tl-time">${_reltime(t.timestamp)}</span>
+            </div>`).join('')}
+         </div>`
+      : '';
+    const toggleBtn = timeline.length
+      ? `<button class="ev-timeline-toggle" data-evid="${ev.id}" title="Show timeline">
+           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+           ${timeline.length}
+         </button>`
+      : '';
     return `
       <div class="ev-card" data-evid="${ev.id}">
         <div class="ev-card-header">
@@ -112,10 +129,12 @@ function _renderList(modal) {
           <span class="ev-status-chip">${statusLabel}</span>
           <span class="ev-service">${_esc(ev.service || '')}</span>
           ${ev.count > 1 ? `<span class="ev-count" title="Occurrences">×${ev.count}</span>` : ''}
+          ${toggleBtn}
           <span class="ev-time" title="${_esc(ev.last_seen || '')}">${_reltime(ev.last_seen)}</span>
         </div>
         <div class="ev-title">${_esc(ev.title || '')}</div>
         ${ev.summary ? `<div class="ev-summary">${_esc(ev.summary)}</div>` : ''}
+        ${timelineHtml}
         ${actions ? `<div class="ev-actions">${actions}</div>` : ''}
       </div>`;
   }).join('');
@@ -139,6 +158,18 @@ function _renderList(modal) {
         btn.disabled = false;
         btn.style.opacity = '';
       }
+    });
+  });
+
+  body.querySelectorAll('.ev-timeline-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.evid;
+      const tl = body.querySelector(`#ev-tl-${id}`);
+      if (!tl) return;
+      const open = !tl.classList.contains('hidden');
+      tl.classList.toggle('hidden', open);
+      btn.classList.toggle('ev-timeline-open', !open);
     });
   });
 }

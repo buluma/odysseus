@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from src.auth_helpers import require_user
+from src.slack_notify import notify_new_event
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,8 @@ async def execute_health_checks(
                         metadata=res,
                     )
                     recorded_events.append(event)
+                    if event.get("count", 1) == 1:
+                        notify_new_event(event)
                 except IOError as e:
                     raise HTTPException(500, f'Failed to record event: {e}')
                 except Exception as e:
