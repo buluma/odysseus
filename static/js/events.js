@@ -39,15 +39,26 @@ async function _action(eventId, verb) {
 
 // ---- Rail badge ----
 
+function _severityDotColor(openEvents) {
+  const sevs = openEvents.map(e => e.severity || '');
+  if (sevs.some(s => s === 'critical' || s === 'error')) return 'var(--color-error, #e06c75)';
+  if (sevs.some(s => s === 'warning')) return '#f0ad4e';
+  return '';
+}
+
 function _updateRailBadge(events) {
-  const openCount = events.filter(e => ['new', 'acknowledged', 'investigating'].includes(e.status)).length;
+  const openEvents = events.filter(e => ['new', 'acknowledged', 'investigating'].includes(e.status));
+  const openCount = openEvents.length;
   const railBtn = document.getElementById(RAIL_ID);
   if (railBtn) {
     railBtn.classList.toggle('rail-notify', openCount > 0);
     railBtn.title = openCount > 0 ? `Events (${openCount} open)` : 'Events';
   }
   const dot = document.getElementById('events-notif-dot');
-  if (dot) dot.style.display = openCount > 0 ? '' : 'none';
+  if (dot) {
+    dot.style.display = openCount > 0 ? '' : 'none';
+    dot.style.backgroundColor = openCount > 0 ? _severityDotColor(openEvents) : '';
+  }
 }
 
 // ---- Render ----
