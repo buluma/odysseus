@@ -5717,6 +5717,130 @@ async function _cmdHelp(args, ctx) {
   return true;
 }
 
+// ── Homelab / n8n / Redmine slash handlers ────────────────────────
+
+async function _cmdHomelabHealth(args, ctx) {
+  slashReply('Checking homelab…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/health`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Homelab bridge error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const lines = [
+      `Status:      ${ctx.esc(d.status || '?')}`,
+      `Message:     ${ctx.esc(d.message || '')}`,
+      `Owner:       ${ctx.esc(d.owner || '?')}`,
+      `Task runner: ${d.task_runner?.configured ? (d.task_runner.running ? 'running' : 'configured') : 'not configured'}`,
+    ];
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Homelab health check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdHomelabConverge(args, ctx) {
+  slashReply('Checking Converge…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/converge/health`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Converge health error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const cv = d.converge || {};
+    const lines = [
+      `Status:      ${ctx.esc(d.status || '?')}`,
+      `Configured:  ${cv.configured ? 'yes' : 'no'}`,
+      `Healthy:     ${cv.ok ? 'yes' : 'no'}`,
+    ];
+    if (cv.message) lines.push(`Note:        ${ctx.esc(cv.message)}`);
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Converge health check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdTicketsDigest(args, ctx) {
+  slashReply('Fetching ticket digest…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/tickets/digest`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Tickets error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const fmt = (list) => list.length
+      ? list.map(t => `  #${t.id || '?'} ${ctx.esc(t.subject || t.name || '(no subject)')}`).join('\n')
+      : '  (none)';
+    const lines = [
+      ctx.esc(d.message || ''),
+      '',
+      `Open (${d.open?.length || 0}):`,
+      fmt(d.open || []),
+      '',
+      `Stale >${14}d (${d.stale?.length || 0}):`,
+      fmt(d.stale || []),
+      '',
+      `Assigned to you (${d.assigned?.length || 0}):`,
+      fmt(d.assigned || []),
+    ];
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Ticket digest failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdN8nHealth(args, ctx) {
+  slashReply('Checking n8n…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/n8n/health`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`n8n health error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const lines = [
+      `Status:  ${ctx.esc(d.overall_status || d.status || '?')}`,
+      `Message: ${ctx.esc(d.message || '')}`,
+    ];
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`n8n health check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdN8nFailures(args, ctx) {
+  slashReply('Fetching n8n failures…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/n8n/failures`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`n8n failures error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const failures = d.failures || [];
+    if (!failures.length) { slashReply('No failed n8n executions.'); return true; }
+    const lines = [ctx.esc(d.message || `${failures.length} failure(s):`), ''];
+    for (const f of failures) {
+      lines.push(`  [${ctx.esc(f.status || '?')}] ${ctx.esc(f.workflow_name || f.workflow_id || '?')} — ${ctx.esc(f.error || '')}`);
+    }
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`n8n failures check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdN8nWorkflows(args, ctx) {
+  slashReply('Fetching n8n workflows…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/n8n/workflows`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`n8n workflows error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const wfs = d.workflows || [];
+    if (!wfs.length) { slashReply('No workflows found.'); return true; }
+    const lines = [ctx.esc(d.message || `${wfs.length} workflow(s):`), ''];
+    for (const w of wfs) {
+      lines.push(`  [${w.active ? 'on ' : 'off'}] ${ctx.esc(w.name || w.id || '?')}  (id: ${ctx.esc(w.id || '?')})`);
+    }
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`n8n workflows fetch failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
 // ── Command registry ──────────────────────────────────────────────
 // Each top-level key is a command group.  Flat commands have a handler
 // directly; grouped commands use `subs`.  `default` is the sub run
@@ -6127,6 +6251,34 @@ const COMMANDS = {
   ping:    { alias: ['pong'], category: 'Utility', hidden: true, help: 'Check if model endpoints are alive', handler: _cmdPing, usage: '/ping' },
   probe:   { alias: ['test-models'], category: 'Utility', hidden: true, help: 'Test which models actually respond', handler: _cmdProbe, usage: '/probe [endpoint]' },
   color:   { alias: ['colour'],     hidden: true, handler: _cmdColor,   usage: '/color [hex]' },
+  homelab: {
+    alias: ['hl'],
+    category: 'Tools',
+    help: 'Homelab status — bridge health and Converge',
+    default: 'health',
+    subs: {
+      health:  { handler: _cmdHomelabHealth,   alias: [], help: 'Bridge health check',   usage: '/homelab health' },
+      converge: { handler: _cmdHomelabConverge, alias: [], help: 'Converge/Redmine health', usage: '/homelab converge' },
+    },
+  },
+  tickets: {
+    alias: ['ticket', 'redmine'],
+    category: 'Tools',
+    help: 'Redmine ticket digest — open, stale, assigned',
+    handler: _cmdTicketsDigest,
+    usage: '/tickets',
+  },
+  n8n: {
+    alias: [],
+    category: 'Tools',
+    help: 'n8n status — health, failures, workflows',
+    default: 'health',
+    subs: {
+      health:    { handler: _cmdN8nHealth,    alias: [],       help: 'n8n health check',         usage: '/n8n health' },
+      failures:  { handler: _cmdN8nFailures,  alias: ['fail'], help: 'Show failed executions',   usage: '/n8n failures' },
+      workflows: { handler: _cmdN8nWorkflows, alias: ['wf'],   help: 'List all workflows',       usage: '/n8n workflows' },
+    },
+  },
 };
 
 // ── Legacy aliases ────────────────────────────────────────────────
