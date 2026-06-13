@@ -74,19 +74,12 @@
   - [ ] Trigger local backups.
   - [ ] Keep local-only tools private; no public inbound endpoint.
 
-- [ ] GitHub repo assistant
-  - [ ] Watch selected repos.
-  - [ ] Notify on failed GitHub Actions.
-  - [ ] Summarize PR changes.
-  - [ ] Generate changelog notes.
-  - [ ] Trigger local build/test scripts.
-
-- [ ] Ask-my-homelab bot
-  - [ ] Answer “why is immich slow?”
-  - [ ] Answer “what containers restarted today?”
-  - [ ] Answer “what changed in caddy logs?”
-  - [ ] Answer “is tailscale healthy?”
-  - [ ] Answer “show disk usage on pi.”
+- [x] Ask-my-homelab bot
+  - [x] Answer “why is immich slow?”
+  - [x] Answer “what containers restarted today?”
+  - [x] Answer “what changed in caddy logs?”
+  - [x] Answer “is tailscale healthy?”
+  - [x] Answer “show disk usage on pi.”
 
 ## Safety Defaults
 
