@@ -77,9 +77,14 @@ src/                Business logic — the brain of the app
   tool_registry.py  Tool registration
   tool_execution.py Tool dispatch and output truncation
   mcp_manager.py    MCP server lifecycle
+  builtin_mcp.py    Registers built-in stdio MCP servers (image_gen, memory, rag, email, prometheus)
   memory.py         Memory extract/recall
   deep_research.py  Multi-step research pipeline
+mcp_servers/        Built-in stdio MCP server scripts (one per server key in builtin_mcp.py)
 routes/             HTTP layer — one file per feature domain (~45 files)
+  openclaw_bridge_routes.py   OpenClaw external API — tickets, bridge health, alert ingest
+  openclaw_homelab_routes.py  Homelab ops — events, disk, docker, ping, Grafana, services …
+  openclaw_n8n_routes.py      n8n monitoring + workflow control (rerun/pause)
 services/           External integrations (TTS, STT, search, memory, hwfit/Cookbook, shell, YouTube)
 static/             Frontend — index.html + style.css + app.js + modular static/js/*.js
 tests/              Flat test suite (~400 files); phased migration to subdirs in progress

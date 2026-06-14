@@ -415,7 +415,28 @@ All upload-limit vars are validated (must be a positive integer) and optional; a
 
 ### Built-in MCP servers (optional setup)
 
-Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
+Odysseus auto-registers built-in MCP servers at startup — no configuration required. They appear in
+the `/mcp` panel and are immediately available to the agent.
+
+**Python stdio servers** (always started, registered via `src/builtin_mcp.py`):
+
+| Key | What it does |
+|-----|--------------|
+| `image_gen` | Image generation via the configured LLM endpoint |
+| `memory` | Store and recall long-term memories across sessions |
+| `rag` | Retrieval-augmented search over personal documents |
+| `email` | Read, search, and draft email (requires IMAP/SMTP config) |
+| `prometheus` | Query your Prometheus instance via PromQL — instant queries, range trends, target health, firing alerts, metric search. Requires `PROMETHEUS_URL` in your environment (default `http://localhost:9090`). Leave unset to disable. |
+
+**npx servers** (started only when the npm package is cached locally):
+
+| Key | What it does |
+|-----|--------------|
+| `builtin_browser` | Page navigation, screenshots, vision via `@playwright/mcp` |
+
+The npx-based servers only start when their npm package is already in the local npx cache. If a
+package isn't cached, that server is skipped with a startup log message, so a fresh install does
+not block on a multi-minute npm download or hang if Playwright system deps are missing.
 
 To enable the browser MCP (page navigation, screenshots, vision), run once:
 
@@ -423,7 +444,12 @@ To enable the browser MCP (page navigation, screenshots, vision), run once:
 npx -y @playwright/mcp@latest --version
 ```
 
-That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus and the server will register at startup.
+That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus and the server
+will register at startup.
+
+See also: [docs/](docs/README.md) for topic guides including [slash commands](docs/slash-commands.md),
+[homelab ops](docs/homelab-ops.md), [events](docs/events.md), [n8n monitoring](docs/n8n-monitoring.md),
+and the [OpenClaw bridge](docs/openclaw-bridge.md).
 
 ## Architecture
 ```
@@ -433,7 +459,7 @@ src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
 services/  docs, memory, search, hwfit (Cookbook) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
-docs/      landing page (index.html) + preview clips
+docs/      topic guides — slash-commands, homelab-ops, events, n8n-monitoring, …
 ```
 
 ## Data
