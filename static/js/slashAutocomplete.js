@@ -23,6 +23,14 @@ const PROMOTED_ALIASES = new Set([
   'memories','forget',
 ]);
 
+// Ordered list of tokens shown when the user types just "/".
+// Controls what appears in the default popup before any filtering.
+const INITIAL_TOKENS = [
+  '/mcp', '/homelab', '/tickets', '/n8n',
+  '/new', '/web', '/todo', '/email', '/notes',
+  '/research', '/chats', '/memory', '/demo', '/note',
+];
+
 function _flatten() {
   const out = [];
   const seen = new Set();
@@ -247,9 +255,14 @@ export function initSlashAutocomplete(textarea) {
       .map(x => x.e);
     }
     if (!items.length && query.length > 1) { hide(); return; }
-    if (!items.length) {
-      // Just "/" with no matches — fall back to showing everything up to MAX_VISIBLE
-      items = all.slice(0, MAX_VISIBLE);
+    if (!items.length || query === '/') {
+      // Bare "/" — show the curated initial list in defined order, falling back
+      // to score-sorted remainder if a token isn't in the flattened set.
+      const byToken = new Map(all.map(e => [e.token, e]));
+      const pinned = INITIAL_TOKENS.map(t => byToken.get(t)).filter(Boolean);
+      const pinnedSet = new Set(INITIAL_TOKENS);
+      const rest = all.filter(e => !pinnedSet.has(e.token));
+      items = [...pinned, ...rest].slice(0, MAX_VISIBLE);
     }
     selectedIdx = 0;
     show();
