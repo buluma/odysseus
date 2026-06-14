@@ -68,10 +68,11 @@ def _find_npx() -> str:
 # carries hundreds of LOC of unique IMAP / HTTP / manager logic not worth
 # duplicating into the native path right now.
 _BUILTIN_SERVERS = {
-    "image_gen":  ("mcp_servers/image_gen_server.py",  "Built-in: Image Generation"),
-    "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
-    "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
-    "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "image_gen":   ("mcp_servers/image_gen_server.py",   "Built-in: Image Generation"),
+    "memory":      ("mcp_servers/memory_server.py",      "Built-in: Memory"),
+    "rag":         ("mcp_servers/rag_server.py",         "Built-in: RAG"),
+    "email":       ("mcp_servers/email_server.py",       "Built-in: Email"),
+    "prometheus":  ("mcp_servers/prometheus_server.py",  "Built-in: Prometheus"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
