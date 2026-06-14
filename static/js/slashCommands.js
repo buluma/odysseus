@@ -5861,6 +5861,151 @@ async function _cmdN8nWorkflows(args, ctx) {
   return true;
 }
 
+async function _cmdHomelabEvents(args, ctx) {
+  slashReply('Fetching open events…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/homelab/events?status=open&limit=20`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Events error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const events = d.events || [];
+    if (!events.length) { slashReply('No open events.'); return true; }
+    const lines = [`${events.length} open event(s):`, ''];
+    for (const ev of events) {
+      const sev = (ev.severity || 'info').toUpperCase();
+      const status = ev.status || '?';
+      const svc = ctx.esc(ev.service || '?');
+      const title = ctx.esc(ev.title || ev.summary || '');
+      lines.push(`  [${sev}/${status}] ${svc}: ${title}`);
+    }
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Events fetch failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdHomelabDisk(args, ctx) {
+  slashReply('Checking disk usage…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/homelab/ops/disk-usage`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Disk error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const table = d.ops?.table || d.table || d.message || JSON.stringify(d);
+    slashReply(`<pre>${ctx.esc(table)}</pre>`);
+  } catch (e) {
+    slashReply(`Disk usage check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdHomelabDocker(args, ctx) {
+  slashReply('Checking for unhealthy containers…');
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/homelab/ops/docker-unhealthy`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Docker error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const containers = d.ops?.containers || [];
+    if (!containers.length) { slashReply(ctx.esc(d.message || 'All containers healthy.')); return true; }
+    const lines = [`${containers.length} unhealthy container(s):`, ''];
+    for (const c of containers) {
+      lines.push(`  ${ctx.esc(c.Names || c.Name || '?')}: ${ctx.esc(c.Status || 'unhealthy')}`);
+    }
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Docker check failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdTicketsSearch(args, ctx) {
+  const query = args.join(' ').trim();
+  if (!query) { slashReply('Usage: /tickets search <query>'); return true; }
+  slashReply(`Searching tickets for <em>${ctx.esc(query)}</em>…`);
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/tickets/search`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit: 10 }),
+    });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Search error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    const tickets = d.tickets || [];
+    if (!tickets.length) { slashReply('No matching tickets.'); return true; }
+    const lines = [`${tickets.length} result(s) for "${ctx.esc(query)}":`, ''];
+    for (const t of tickets) {
+      const id = t.id || t.issue_id || '?';
+      const subject = ctx.esc(t.subject || t.title || '(no subject)');
+      const status = t.status || t.status_name || '';
+      lines.push(`  #${id} ${subject}${status ? ` (${ctx.esc(status)})` : ''}`);
+    }
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (e) {
+    slashReply(`Ticket search failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdTicketsShow(args, ctx) {
+  const id = args[0]?.replace(/^#/, '').trim();
+  if (!id || !/^\d+$/.test(id)) { slashReply('Usage: /tickets show <id>'); return true; }
+  slashReply(`Fetching ticket #${id}…`);
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/tickets/${encodeURIComponent(id)}/summary`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Ticket error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    slashReply(ctx.esc(d.summary || d.message || JSON.stringify(d)).replace(/\n/g, '<br>'));
+  } catch (e) {
+    slashReply(`Ticket fetch failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdN8nTrigger(args, ctx) {
+  const name = args.join(' ').trim();
+  if (!name) { slashReply('Usage: /n8n trigger <workflow name>'); return true; }
+  slashReply(`Triggering workflow <em>${ctx.esc(name)}</em>…`);
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/n8n/ops/n8n-rerun`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: name, confirm: true }),
+    });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Trigger error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    slashReply(ctx.esc(d.message || 'Workflow triggered.'));
+  } catch (e) {
+    slashReply(`Workflow trigger failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
+async function _cmdN8nPause(args, ctx) {
+  const name = args.join(' ').trim();
+  if (!name) { slashReply('Usage: /n8n pause <workflow name>'); return true; }
+  slashReply(`Pausing workflow <em>${ctx.esc(name)}</em>…`);
+  try {
+    const res = await fetch(`${API_BASE}/api/openclaw/n8n/ops/n8n-pause`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: name, confirm: true }),
+    });
+    const d = await res.json();
+    if (!res.ok) { slashReply(`Pause error ${res.status}: ${ctx.esc(d?.detail || '')}`); return true; }
+    slashReply(ctx.esc(d.message || 'Workflow paused.'));
+  } catch (e) {
+    slashReply(`Workflow pause failed: ${ctx.esc(e.message)}`);
+  }
+  return true;
+}
+
 // ── Command registry ──────────────────────────────────────────────
 // Each top-level key is a command group.  Flat commands have a handler
 // directly; grouped commands use `subs`.  `default` is the sub run
@@ -6277,17 +6422,24 @@ const COMMANDS = {
     help: 'Homelab status and Q&A — health, Converge, ask',
     default: 'health',
     subs: {
-      health:   { handler: _cmdHomelabHealth,   alias: [],    help: 'Bridge health check',                    usage: '/homelab health' },
-      converge: { handler: _cmdHomelabConverge, alias: [],    help: 'Converge/Redmine health',               usage: '/homelab converge' },
-      ask:      { handler: _cmdHomelabAsk,      alias: ['q'], help: 'Ask a question about your homelab',     usage: '/homelab ask why is immich slow?' },
+      health:   { handler: _cmdHomelabHealth,   alias: [],          help: 'Bridge health check',                  usage: '/homelab health' },
+      converge: { handler: _cmdHomelabConverge, alias: [],          help: 'Converge/Redmine health',              usage: '/homelab converge' },
+      events:   { handler: _cmdHomelabEvents,   alias: ['ev','inc'], help: 'Open incidents and events',           usage: '/homelab events' },
+      disk:     { handler: _cmdHomelabDisk,     alias: ['df'],      help: 'Disk usage on Heimdal',               usage: '/homelab disk' },
+      docker:   { handler: _cmdHomelabDocker,   alias: ['ps'],      help: 'Unhealthy Docker containers',         usage: '/homelab docker' },
+      ask:      { handler: _cmdHomelabAsk,      alias: ['q'],       help: 'Ask a question about your homelab',   usage: '/homelab ask why is immich slow?' },
     },
   },
   tickets: {
     alias: ['ticket', 'redmine'],
     category: 'Tools',
     help: 'Redmine ticket digest — open, stale, assigned',
-    handler: _cmdTicketsDigest,
-    usage: '/tickets',
+    default: 'digest',
+    subs: {
+      digest: { handler: _cmdTicketsDigest, alias: [],            help: 'Open/stale/assigned digest', usage: '/tickets digest' },
+      search: { handler: _cmdTicketsSearch, alias: ['find','s'],  help: 'Search tickets by keyword',  usage: '/tickets search immich backup' },
+      show:   { handler: _cmdTicketsShow,   alias: ['get','view'], help: 'View a single ticket',      usage: '/tickets show 1234' },
+    },
   },
   n8n: {
     alias: [],
@@ -6295,9 +6447,11 @@ const COMMANDS = {
     help: 'n8n status — health, failures, workflows',
     default: 'health',
     subs: {
-      health:    { handler: _cmdN8nHealth,    alias: [],       help: 'n8n health check',         usage: '/n8n health' },
-      failures:  { handler: _cmdN8nFailures,  alias: ['fail'], help: 'Show failed executions',   usage: '/n8n failures' },
-      workflows: { handler: _cmdN8nWorkflows, alias: ['wf'],   help: 'List all workflows',       usage: '/n8n workflows' },
+      health:    { handler: _cmdN8nHealth,    alias: [],            help: 'n8n health check',          usage: '/n8n health' },
+      failures:  { handler: _cmdN8nFailures,  alias: ['fail'],      help: 'Show failed executions',    usage: '/n8n failures' },
+      workflows: { handler: _cmdN8nWorkflows, alias: ['wf','list'], help: 'List all workflows',        usage: '/n8n workflows' },
+      trigger:   { handler: _cmdN8nTrigger,   alias: ['run'],       help: 'Trigger a workflow by name', usage: '/n8n trigger Email Tags' },
+      pause:     { handler: _cmdN8nPause,     alias: ['stop'],      help: 'Pause a workflow by name',  usage: '/n8n pause Email Tags' },
     },
   },
 };
