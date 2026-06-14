@@ -42,6 +42,22 @@ function _flatten() {
       });
     }
     if (def.subs) {
+      // Group commands (subs but no handler) get a synthetic top-level entry so
+      // "/homelab", "/tickets", "/n8n" etc. appear in the default "/" menu at
+      // a competitive score, not just their longer "/homelab health" sub-entries.
+      if (!def.handler && def.default) {
+        const tok = `/${name}`;
+        if (!seen.has(tok)) {
+          seen.add(tok);
+          out.push({
+            token: tok,
+            aliases: (def.alias || []).map(a => `/${a}`),
+            category: def.category || '',
+            help: def.help || '',
+            usage: def.usage || tok,
+          });
+        }
+      }
       for (const [sub, sdef] of Object.entries(def.subs)) {
         if (sub.startsWith('_')) continue;
         if (sdef.hidden) continue;
