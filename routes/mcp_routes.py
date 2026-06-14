@@ -119,7 +119,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
         try:
             servers = db.query(McpServer).all()
             result = []
+            db_ids = set()
             for srv in servers:
+                db_ids.add(srv.id)
                 status = mcp_manager.get_server_status(srv.id)
                 oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
                 needs_oauth = False
@@ -144,6 +146,31 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "auth_url": status.get("auth_url"),
                     "has_oauth": oauth_cfg is not None,
                     "needs_oauth": needs_oauth,
+                    "builtin": False,
+                })
+            # Include built-in servers that live only in mcp_manager (not in DB)
+            for server_id, status in mcp_manager.get_all_statuses().items():
+                if server_id in db_ids:
+                    continue
+                total_tools = status.get("tool_count", 0)
+                result.append({
+                    "id": server_id,
+                    "name": status.get("name", server_id),
+                    "transport": status.get("transport", "stdio"),
+                    "command": None,
+                    "args": [],
+                    "env": {},
+                    "url": None,
+                    "is_enabled": True,
+                    "status": status.get("status", "disconnected"),
+                    "tool_count": total_tools,
+                    "disabled_tool_count": 0,
+                    "enabled_tool_count": total_tools,
+                    "error": status.get("error"),
+                    "auth_url": None,
+                    "has_oauth": False,
+                    "needs_oauth": False,
+                    "builtin": True,
                 })
             return result
         finally:
