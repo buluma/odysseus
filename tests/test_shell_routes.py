@@ -16,7 +16,6 @@ from routes.shell_routes import (
     _find_line_break,
     _host_docker_access_enabled,
     _import_optional_dependency_for_status,
-
     _running_in_container,
     _docker_row_status,
     _package_installed_from_probe,
@@ -434,6 +433,26 @@ class TestPackageProbeStatus:
         assert "os.path.expanduser('~/.local/bin')" in script
         assert "add_user_install_bins_to_path()" in script
         assert "shutil.which(b)" in script
+
+    def test_status_import_prepares_optional_dependency(self, monkeypatch):
+        import routes.shell_routes as shell_routes
+
+        calls = []
+        monkeypatch.setattr(
+            shell_routes,
+            "prepare_optional_dependency_import",
+            lambda name: calls.append(name),
+        )
+        monkeypatch.setattr(
+            shell_routes.importlib,
+            "import_module",
+            lambda name: SimpleNamespace(__name__=name),
+        )
+
+        module = _import_optional_dependency_for_status("realesrgan")
+
+        assert module.__name__ == "realesrgan"
+        assert calls == ["realesrgan"]
 
 
 class TestSshBaseArgv:
