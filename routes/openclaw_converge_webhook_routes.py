@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from src.event_store import EventStore
 from src.slack_notify import notify_new_event
@@ -94,10 +94,11 @@ def setup_converge_webhook_routes() -> APIRouter:
 
     @router.post("/api/openclaw/converge/webhook")
     async def converge_webhook(
-        body: bytes,
+        request: Request,
         x_webhook_signature: Annotated[Optional[str], Header()] = None,
     ) -> dict:
         """Receive and process a Converge ticket lifecycle webhook."""
+        body = await request.body()
         secret = (os.getenv("CONVERGE_WEBHOOK_SECRET") or "").strip()
         if not secret:
             logger.error("CONVERGE_WEBHOOK_SECRET not configured — webhook rejected")

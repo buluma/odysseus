@@ -59,9 +59,11 @@ def _endpoint(router: APIRouter, path: str, method: str):
     raise AssertionError(f"route not found: {method} {path}")
 
 
-def _mock_request(body: bytes, signature: str):
+def _mock_request(body: bytes) -> MagicMock:
     req = MagicMock()
-    req._body = body
+    async def _body():
+        return body
+    req.body = _body
     return req
 
 
@@ -83,7 +85,7 @@ async def test_valid_signature_accepted(monkeypatch, tmp_path):
     with patch("routes.openclaw_converge_webhook_routes.EventStore") as MockStore:
         instance = MockStore.return_value
         instance.record_event.return_value = {"id": "ev-1", "severity": "info"}
-        result = await handler(body=body, x_webhook_signature=sig)
+        result = await handler(request=_mock_request(body), x_webhook_signature=sig)
 
     assert result["ok"] is True
 
@@ -100,7 +102,7 @@ async def test_missing_signature_rejected(monkeypatch, tmp_path):
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
-        await handler(body=body, x_webhook_signature=None)
+        await handler(request=_mock_request(body), x_webhook_signature=None)
     assert exc.value.status_code == 401
 
 
@@ -116,7 +118,7 @@ async def test_invalid_signature_rejected(monkeypatch, tmp_path):
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
-        await handler(body=body, x_webhook_signature="sha256=deadbeef")
+        await handler(request=_mock_request(body), x_webhook_signature="sha256=deadbeef")
     assert exc.value.status_code == 401
 
 
@@ -132,7 +134,7 @@ async def test_no_secret_configured_rejects(monkeypatch, tmp_path):
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
-        await handler(body=body, x_webhook_signature="sha256=anything")
+        await handler(request=_mock_request(body), x_webhook_signature="sha256=anything")
     assert exc.value.status_code == 503
 
 
@@ -154,7 +156,7 @@ async def _call(event: str, changes=None, monkeypatch=None, tmp_path=None):
          patch("routes.openclaw_converge_webhook_routes.notify_new_event") as mock_notify:
         instance = MockStore.return_value
         instance.record_event.return_value = {"id": "ev-1", "severity": "info"}
-        result = await handler(body=body, x_webhook_signature=sig)
+        result = await handler(request=_mock_request(body), x_webhook_signature=sig)
         return result, instance, mock_notify
 
 
