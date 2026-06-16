@@ -836,7 +836,7 @@ def test_failed_cron_jobs_queries_db(tmp_path, monkeypatch):
     task = ScheduledTask(id='t1', name='nightly-sync', owner='alice', status='active')
     run = TaskRun(
         id='r1', task_id='t1', status='error', error='timeout',
-        started_at=datetime.datetime.utcnow() - datetime.timedelta(hours=2),
+        started_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(hours=2),
     )
     db = TestSession()
     db.add(task)
