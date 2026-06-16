@@ -61,7 +61,7 @@ def _require_admin(request: Request):
     # In-process tool loopback. The AuthMiddleware already validated the
     # internal token + loopback client before setting this marker, so
     # honour it here as admin-equivalent.
-    if user == "internal-tool":
+    if user == INTERNAL_TOOL_USER:
         return
     if not user or user == "api":
         raise HTTPException(403, "Admin only")
