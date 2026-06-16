@@ -182,6 +182,9 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        # Converge → Odysseus ticket-lifecycle webhooks. Auth is HMAC-SHA256
+        # via X-Webhook-Signature; Converge cannot supply a session cookie.
+        "/api/openclaw/converge/webhook",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded

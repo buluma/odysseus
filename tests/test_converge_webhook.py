@@ -206,3 +206,46 @@ async def test_ticket_updated_skipped(monkeypatch, tmp_path):
     assert result["ok"] is True
     store.record_event.assert_not_called()
     notify.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware exemption
+# ---------------------------------------------------------------------------
+
+def test_converge_webhook_path_is_auth_exempt():
+    """Pin that /api/openclaw/converge/webhook is in AUTH_EXEMPT_EXACT.
+
+    Converge cannot supply a session cookie; the HMAC signature in
+    X-Webhook-Signature is the credential. Without this exemption
+    AuthMiddleware rejects every delivery with 401 before the signature
+    is ever checked.
+    """
+    import os
+    app_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app.py",
+    )
+    with open(app_path, encoding="utf-8") as fh:
+        src = fh.read()
+
+    start = src.find("AUTH_EXEMPT_EXACT")
+    assert start != -1, "AUTH_EXEMPT_EXACT not declared in app.py"
+    lb = src.find("{", start)
+    assert lb != -1
+    depth = 0
+    end = -1
+    for i in range(lb, len(src)):
+        ch = src[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    assert end != -1, "could not find closing brace for AUTH_EXEMPT_EXACT"
+    body = src[lb + 1 : end]
+    assert "/api/openclaw/converge/webhook" in body, (
+        "/api/openclaw/converge/webhook must be in AUTH_EXEMPT_EXACT — "
+        "Converge deliveries are rejected with 401 without it"
+    )
