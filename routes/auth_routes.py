@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager
+from core.auth import AuthManager, TOKEN_TTL
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
@@ -148,7 +148,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             path="/",
         )
         if body.remember:
-            cookie_kwargs["max_age"] = 60 * 60 * 24 * 7  # 7 days
+            cookie_kwargs["max_age"] = TOKEN_TTL
         response.set_cookie(**cookie_kwargs)
         return {"ok": True, "username": username}
 
