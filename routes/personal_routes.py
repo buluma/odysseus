@@ -18,14 +18,15 @@ UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 logger = logging.getLogger(__name__)
 
 
-def _personal_upload_dir_for_owner(owner: str | None) -> str:
+def _personal_upload_dir_for_owner(owner: str | None, create: bool = True) -> str:
     """Return the per-owner upload directory used for direct RAG uploads."""
     owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
     upload_dir = os.path.abspath(os.path.join(UPLOADS_DIR, owner_segment))
     base_abs = os.path.abspath(UPLOADS_DIR)
     if os.path.commonpath([upload_dir, base_abs]) != base_abs:
         raise ValueError("Unsafe upload owner path")
-    os.makedirs(upload_dir, exist_ok=True)
+    if create:
+        os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
 
 
@@ -275,11 +276,13 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
                 except Exception as e:
                     logger.warning(f"RAG removal failed for {filepath}: {e}")
 
-            # Delete file from disk if it's in uploads dir
+            # Delete file from disk if it's in the caller's own uploads dir.
+            # Scope to the per-owner subdir, not the shared uploads root, so one
+            # admin can't delete another user's personal files by path.
             deleted_from_disk = False
             try:
-                abs_target = os.path.abspath(filepath)
-                base_abs = os.path.abspath(UPLOADS_DIR)
+                abs_target = os.path.realpath(filepath)
+                base_abs = os.path.realpath(_personal_upload_dir_for_owner(owner, create=False))
                 in_uploads = (
                     abs_target == base_abs
                     or os.path.commonpath([abs_target, base_abs]) == base_abs
