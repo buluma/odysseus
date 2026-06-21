@@ -551,11 +551,13 @@ def setup_openclaw_bridge_routes(
             resp = await client.get(
                 f"{base_url}/api/external/tickets",
                 headers={"X-API-Key": api_key},
-                params={"status": "open", "limit": 50},
+                params={"limit": 200},
             )
         if resp.status_code >= 400:
             raise HTTPException(resp.status_code, resp.text[:500])
         tickets = resp.json().get("tickets", [])
+        _CLOSED_STATUSES = {"Closed", "Resolved"}
+        tickets = [t for t in tickets if t.get("status") not in _CLOSED_STATUSES]
         stale_cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=_STALE_DAYS)
         stale: list[dict[str, Any]] = []
         assigned: list[dict[str, Any]] = []
