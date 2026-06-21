@@ -571,7 +571,7 @@ def setup_openclaw_bridge_routes(
                 except ValueError:
                     pass
             assignee = t.get("assigned_to") or t.get("assignedTo") or ""
-            if assignee and owner.lower() in str(assignee).lower():
+            if assignee and str(assignee).strip().lower() not in ("", "nobody"):
                 assigned.append(t)
         return {
             "status": "ok",
