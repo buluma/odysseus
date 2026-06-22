@@ -759,9 +759,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     except httpx.HTTPStatusError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
-            logger.warning(f"Failed to probe {url} with API key: HTTP {status}")
+            logger.warning("Failed to probe %s with API key: HTTP %s", _redact_url_for_log(url), status)
             return []
-        logger.warning(f"Failed to probe {url}: {e}")
+        logger.warning("Failed to probe %s: %s", _redact_url_for_log(url), e)
     except Exception as e:
         if api_key:
             logger.warning("Failed to probe %s with API key: %s", _redact_url_for_log(url), e)

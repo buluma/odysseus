@@ -17,6 +17,7 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from core.log_safety import redact_url
 from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
