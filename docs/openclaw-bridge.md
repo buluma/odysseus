@@ -36,6 +36,7 @@ Configure the following environment variables in your `.env` file to enable Conv
 
 - `CONVERGE_BASE_URL`: The base URL of the Converge/Redmine Dashboard instance (e.g., `http://redmine-dashboard:3000`).
 - `CONVERGE_API_KEY`: The API key for Converge. **This key should be read-only in Converge** (configured in Converge's `EXTERNAL_API_KEYS`).
+- `CONVERGE_BEARER_TOKEN`: Optional Bearer token (`mrt_…`) for Converge write operations (e.g., ticket creation via `/api/issues/local`). Minted from Converge UI at `POST /api/mobile/tokens`. Unlike `CONVERGE_API_KEY` (read-only, x-api-key), this authenticates as a real user and can create/update resources.
 - `OPENCLAW_ALLOWED_WORKFLOWS`: Controls which scheduled workflows can be triggered. See the Workflow Allowlist section below.
 
 ## Session Mapping
@@ -325,6 +326,7 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
 
 ### `POST /api/openclaw/homelab/events/{event_id}/redmine-ticket`
 Create a Redmine ticket tracking an event through an explicit Converge service-token endpoint. Returns `501` unless `CONVERGE_TICKET_CREATE_PATH` is configured.
+> **Note (2026-06-24):** Converge now supports Bearer token auth on all web API routes. Ticket creation can use `Authorization: Bearer mrt_…` against `/api/issues/local` instead of `X-API-Key` against a custom path. Set `CONVERGE_BEARER_TOKEN` and `CONVERGE_TICKET_CREATE_PATH=/api/issues/local` to enable.
 **Requires:** `homelab:write` and request body flag `"confirm": true`
 ```bash
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
