@@ -2196,6 +2196,22 @@ import * as Modals from './modalManager.js';
     // suppress the single morph button to avoid two redundant controls.
     if (_hasViewToggle(lang)) show = false;
     actionBtn.style.display = show ? '' : 'none';
+    document.querySelectorAll('.md-toolbar-edit-only').forEach(el => {
+      el.style.display = (lang === 'markdown' && _mdActive) ? 'none' : '';
+    });
+    const fsBtn = document.getElementById('doc-fontsize-btn');
+    if (fsBtn) {
+      const doc = activeDocId && docs.get(activeDocId);
+      const isPdfDoc = !!(doc && _isFormBackedDoc(doc.content || ''));
+      fsBtn.style.display = (isPdfDoc || (lang === 'markdown' && _mdActive)) ? 'none' : '';
+    }
+    const mdToolbar = document.getElementById('doc-md-toolbar');
+    if (mdToolbar) {
+      mdToolbar.classList.toggle('md-preview-active', lang === 'markdown' && !!_mdActive);
+      mdToolbar.classList.toggle('md-write-active', lang === 'markdown' && !_mdActive);
+    }
+    if (_mdPreview) _mdPreview.classList.toggle('md-preview-active', lang === 'markdown' && !!_mdActive);
+    if (mdToolbar && mdToolbar._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
 
     // Now that the contextual buttons' visibility is settled, collapse the bar
     // if it ended up empty (the common plain-doc-on-mobile case).
