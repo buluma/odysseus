@@ -27,7 +27,8 @@ services:
       # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
-      - ./data/local:/app/.local:z
+      - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

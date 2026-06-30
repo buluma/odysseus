@@ -37,7 +37,44 @@ fi
 # to mkdir them. Chown the whole /app tree — fast (<1s on this size)
 # and idempotent via the `-not -uid` filter so we only touch files
 # that need fixing.
+ODY_USER="$(getent passwd "$PUID" | cut -d: -f1)"
+[ -z "$ODY_USER" ] && ODY_USER=odysseus
+
+# Docker-socket group plumbing for the explicit host-Docker overlay. When
+# opted in, the socket is owned by root:<host docker gid>. Add the app user
+# to that group and later call gosu by username so supplementary groups are
+# retained.
+DOCKER_SOCK="${DOCKER_SOCK:-/var/run/docker.sock}"
+if [ "${ODYSSEUS_ENABLE_HOST_DOCKER:-}" = "true" ] && [ -S "$DOCKER_SOCK" ]; then
+    SOCK_GID="$(stat -c '%g' "$DOCKER_SOCK" 2>/dev/null || echo '')"
+    if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
+        if ! getent group "$SOCK_GID" >/dev/null 2>&1; then
+            groupadd -g "$SOCK_GID" docker_host || true
+        fi
+        SOCK_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1)"
+        if [ -n "$SOCK_GROUP" ]; then
+            usermod -aG "$SOCK_GROUP" "$ODY_USER" 2>/dev/null || true
+        fi
+    fi
+fi
+
+mount_root_for() {
+    awk -v target="$1" '$5 == target { print $4; exit }' /proc/self/mountinfo 2>/dev/null || true
+}
+
+is_broad_mount_root() {
+    case "$1" in
+        /|/home|/srv|/var|/usr|/opt|/tmp|/mnt|/media)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+repair_tree_ownership() {
+    dir="$1"
 for dir in /app /app/data /app/logs; do
+
     if [ -d "$dir" ]; then
         # `find ... -not -uid` keeps this O(touched-files), not
         # O(everything), so terabyte-sized maildirs don't slow startup.
