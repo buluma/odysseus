@@ -30,6 +30,9 @@ import * as Modals from './modalManager.js';
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
   let _emailHeaderManualExpandUntil = 0;
+  let _emailStreamAnimFrame = null;
+  let _emailStreamRenderedBody = '';
+  let _emailStreamTargetBody = '';
 
   // Diff mode state
   let _diffModeActive = false;
@@ -2358,17 +2361,90 @@ import * as Modals from './modalManager.js';
     });
   }
 
-  function _stripEmailReplyQuoteText(text) {
+  function _renderStreamingEmailBody(body, { immediate = false } = {}) {
+    const rich = document.getElementById('doc-email-richbody');
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!rich) return;
+
+    _emailStreamTargetBody = body || '';
+    if (!_emailStreamRenderedBody && textarea && textarea.value) {
+      _emailStreamRenderedBody = textarea.value;
+    }
+
+    const applyBody = (value) => {
+      if (textarea) {
+        textarea.value = value;
+        textarea.scrollTop = textarea.scrollHeight;
+      }
+      rich.innerHTML = _emailBodyToHtml(value);
+      rich.scrollTop = rich.scrollHeight;
+    };
+
+    if (immediate) {
+      if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
+      _emailStreamAnimFrame = null;
+      _emailStreamRenderedBody = _emailStreamTargetBody;
+      applyBody(_emailStreamRenderedBody);
+      return;
+    }
+
+    if (_emailStreamTargetBody.length < _emailStreamRenderedBody.length ||
+        !_emailStreamTargetBody.startsWith(_emailStreamRenderedBody)) {
+      _emailStreamRenderedBody = '';
+    }
+
+    if (_emailStreamAnimFrame) return;
+    const tick = () => {
+      const remaining = _emailStreamTargetBody.length - _emailStreamRenderedBody.length;
+      if (remaining <= 0) {
+        _emailStreamAnimFrame = null;
+        return;
+      }
+      const step = Math.max(1, Math.min(8, Math.ceil(remaining / 18)));
+      _emailStreamRenderedBody = _emailStreamTargetBody.slice(0, _emailStreamRenderedBody.length + step);
+      applyBody(_emailStreamRenderedBody);
+      _emailStreamAnimFrame = requestAnimationFrame(tick);
+    };
+    _emailStreamAnimFrame = requestAnimationFrame(tick);
+  }
+
+  function _emailQuoteStartIndex(lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = String(lines[i] || '').trim();
+      if (
+        /^[-_=–—\s]{3,}(previous|original|forwarded)\s+(message|email|mail)[-_=–—\s]{3,}$/i.test(line)
+        || /^On .+ wrote:\s*$/i.test(line)
+        || /^-{2,}\s*Original Message\s*-{2,}$/i.test(line)
+      ) {
+        return i;
+      }
+      // Some pasted/converted threads lose the separator and start directly
+      // with mail headers. Treat that as quoted history only when the nearby
+      // lines look like a real header block.
+      if (/^From:\s+\S/i.test(line)) {
+        const nearby = lines.slice(i + 1, i + 8).map(l => String(l || '').trim());
+        if (nearby.some(l => /^To:\s+/i.test(l)) || nearby.some(l => /^Subject:\s+/i.test(l))) {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  function _splitEmailReplyQuote(text) {
     const original = String(text || '');
-    if (!original) return { body: '', stripped: false };
+    if (!original) return { body: '', quote: '', stripped: false };
     const lines = original.split('\n');
-    const quoteIdx = lines.findIndex(line =>
-      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
-      || /^On .+ wrote:\s*$/i.test(line.trim())
-    );
-    if (quoteIdx <= 0) return { body: original.trim(), stripped: false };
+    const quoteIdx = _emailQuoteStartIndex(lines);
+    if (quoteIdx < 0) return { body: original.trim(), quote: '', stripped: false };
     const body = lines.slice(0, quoteIdx).join('\n').trim();
-    return { body, stripped: !!body };
+    const quote = lines.slice(quoteIdx).join('\n').trim();
+    return { body, quote, stripped: true };
+  }
+
+  function _stripEmailReplyQuoteText(text) {
+    const split = _splitEmailReplyQuote(text);
+    return { body: split.body, stripped: split.stripped };
   }
 
   function _emailReplyOwnText(text) {
@@ -5894,12 +5970,8 @@ import * as Modals from './modalManager.js';
     const doc = docs.get(docId);
     if (!doc) return;
     const fields = _parseEmailHeader(doc.content || '');
-    const lines = String(fields.body || '').split('\n');
-    const quoteIdx = lines.findIndex(line =>
-      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
-      || /^On .+ wrote:\s*$/i.test(line.trim())
-    );
-    const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
+    const oldSplit = _splitEmailReplyQuote(fields.body || '');
+    const quote = oldSplit.quote;
     const ownText = _emailReplyOwnText(fields.body || '');
     if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
       if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
@@ -9235,7 +9307,7 @@ import * as Modals from './modalManager.js';
     // and enterDiffMode().
     if (_diffModeActive) exitDiffMode(true);
     let docId = data.doc_id;
-    const newContent = data.content || '';
+    let newContent = data.content || '';
 
     // Migrate streaming temp doc to real ID
     if (streamingId && streamingId.startsWith('_streaming_') && docs.has(streamingId)) {
@@ -9285,6 +9357,35 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     const oldContent = (docId === activeDocId && textarea) ? textarea.value : '';
     const isExistingDoc = docs.has(docId);
+    if (isExistingDoc) {
+      const existingDoc = docs.get(docId);
+      const existingLang = ((existingDoc?.language || data.language || '') + '').toLowerCase();
+      const oldFields = _parseEmailHeader(existingDoc?.content || '');
+      const newFields = _parseEmailHeader(newContent || '');
+      if (
+        existingLang === 'email'
+        && oldFields.body
+        && newFields.body
+        && (oldFields.inReplyTo || oldFields.sourceUid || newFields.inReplyTo || newFields.sourceUid)
+      ) {
+        const oldSplit = _splitEmailReplyQuote(oldFields.body);
+        if (oldSplit.quote) {
+          const newSplit = _splitEmailReplyQuote(newFields.body);
+          const nextBody = `${(newSplit.body || newFields.body || '').trim()}\n\n${oldSplit.quote}`.trim();
+          newContent = _buildEmailContent(
+            newFields.to || oldFields.to,
+            newFields.subject || oldFields.subject,
+            newFields.inReplyTo || oldFields.inReplyTo,
+            newFields.references || oldFields.references,
+            nextBody,
+            newFields.sourceUid || oldFields.sourceUid,
+            newFields.sourceFolder || oldFields.sourceFolder,
+            newFields.cc || oldFields.cc,
+            newFields.bcc || oldFields.bcc,
+          );
+        }
+      }
+    }
 
     // Add or update in docs map
     if (isExistingDoc) {
