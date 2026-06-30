@@ -77,6 +77,39 @@ def _normalize_image_endpoint_base(url: str) -> str:
     return base
 
 
+def _is_openai_api_base(url: str) -> bool:
+    """Return True only when url's hostname is exactly api.openai.com."""
+    from urllib.parse import urlsplit
+    try:
+        candidate = url if "://" in url else f"https://{url}"
+        return urlsplit(candidate).hostname == "api.openai.com"
+    except Exception:
+        return False
+
+
+_GALLERY_ENDPOINT_PATHS = frozenset({
+    "/images/edits",
+    "/images/generations",
+    "/images/harmonize",
+    "/images/img2img",
+    "/images/inpaint",
+    "/images/upscale",
+    "/images/variations",
+    "/sdapi/v1/img2img",
+})
+
+
+def _join_checked_gallery_endpoint(base: str, path: str) -> str:
+    """Append a known-constant gallery path suffix to a validated base URL.
+
+    Rejects paths not in the pre-approved list so arbitrary strings can never
+    be spliced into the URL passed to httpx.
+    """
+    if path not in _GALLERY_ENDPOINT_PATHS:
+        raise ValueError(f"Unexpected gallery path: {path!r}")
+    return base + path
+
+
 def _visible_image_endpoint_query(db, owner: str | None):
     from src.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(
@@ -1060,7 +1093,7 @@ def setup_gallery_routes() -> APIRouter:
         if not base.endswith("/v1"):
             base += "/v1"
 
-        is_openai = "api.openai.com" in base
+        is_openai = _is_openai_api_base(base)
 
         if is_openai:
             # OpenAI path: /v1/images/edits with gpt-image-1.
@@ -1129,7 +1162,7 @@ def setup_gallery_routes() -> APIRouter:
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
-                    r = await client.post(f"{base}/images/edits", headers=headers, data=data, files=files)
+                    r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
                         raise HTTPException(r.status_code, f"OpenAI edit failed: {r.text[:300]}")
                     result = r.json()
@@ -1181,7 +1214,7 @@ def setup_gallery_routes() -> APIRouter:
             if chosen_model:
                 body["model"] = chosen_model
             async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(f"{base}/images/inpaint", json=body)
+                r = await client.post(_join_checked_gallery_endpoint(base, "/images/inpaint"), json=body)
                 if r.status_code != 200:
                     raise HTTPException(r.status_code, f"Inpaint failed: {r.text[:200]}")
                 return r.json()
@@ -1282,7 +1315,7 @@ def setup_gallery_routes() -> APIRouter:
         # source. Earlier hack (alpha-blend the regen back at `strength`)
         # produced visibly broken results, so we refuse and tell the
         # user to spin up a real diffusion endpoint instead.
-        if "api.openai.com" in base:
+        if _is_openai_api_base(base):
             raise HTTPException(400,
                 "Harmonize needs a diffusion server that supports img2img "
                 "(SD WebUI / Forge / Comfy). OpenAI's API doesn't expose "
@@ -1347,7 +1380,7 @@ def setup_gallery_routes() -> APIRouter:
         # 1024×1024 inference pass on slower setups.
         async with httpx.AsyncClient(timeout=240) as client:
             for path, kind, payload in candidates:
-                target = base_root + path if path.startswith("/sdapi") else base + path
+                target = _join_checked_gallery_endpoint(base_root if path.startswith("/sdapi") else base, path)
                 try:
                     r = await client.post(target, json=payload, headers=headers)
                     if r.status_code == 404:
