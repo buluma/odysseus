@@ -774,6 +774,52 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool in BUILTIN_EMAIL_TOOLS:
+        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server.
+        # Non-admin owners never reach here: BUILTIN_EMAIL_TOOLS ⊆ NON_ADMIN_BLOCKED_TOOLS,
+        # so is_public_blocked_tool() above already rejected them.
+        mcp = get_mcp_manager()
+        qualified = f"mcp__email__{tool}"
+        desc = f"email: {tool}"
+        if mcp:
+            _raw = content.strip()
+            args = {}
+            _args_error = None
+            if _raw:
+                # A non-empty body is always meant to be the call's arguments,
+                # and every email tool takes a JSON object. Anything that
+                # isn't one is a correctable error — NOT a silent empty-args
+                # call, which would read the DEFAULT mailbox/folder instead of
+                # the one the model meant (#3966 class). Only an EMPTY body
+                # keeps the no-arg path (e.g. ```list_email_accounts```).
+                try:
+                    parsed = json.loads(_raw)
+                except (json.JSONDecodeError, TypeError) as _je:
+                    # Covers both `{account: "work"}` (looks like JSON, bad)
+                    # and `account: work` (not JSON at all).
+                    _args_error = (
+                        f"'{tool}' arguments are not valid JSON ({_je}). "
+                        'Send a JSON object, e.g. {"account": "work"} — '
+                        "keys and string values need double quotes."
+                    )
+                else:
+                    if isinstance(parsed, dict):
+                        args = parsed
+                    else:
+                        _args_error = (
+                            f"'{tool}' arguments must be a JSON object, "
+                            'e.g. {"uid": "..."} — got a JSON array/value instead.'
+                        )
+            if _args_error is not None:
+                result = {"error": _args_error, "exit_code": 1}
+            else:
+                if owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
+                result = await mcp.call_tool(qualified, args)
+        else:
+            result = {"error": "MCP manager not available", "exit_code": 1}
+
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()

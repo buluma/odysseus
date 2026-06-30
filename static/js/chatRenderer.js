@@ -406,8 +406,50 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+let EXEC_FENCE_RE = null;
+const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
+
+function escapeRegex(source) {
+  return String(source).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripExecutedFence(match, tag, inline, body) {
+  const inlineArgs = (inline || '').trim();
+  if (!inlineArgs) return '';
+  const bodyText = (body || '').trim();
+  const content = bodyText ? `${inlineArgs}\n${bodyText}` : inlineArgs;
+  try {
+    JSON.parse(content);
+  } catch {
+    return match;
+  }
+  return '';
+}
+
+async function loadExecFenceRegex() {
+  try {
+    const res = await fetch('/api/tools', { credentials: 'same-origin' });
+    const data = await res.json();
+    const tags = (data.tools || [])
+      .map((t) => t.id)
+      .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
+    if (tags.length) {
+      EXEC_FENCE_RE = new RegExp(
+        '```(' + tags.map(escapeRegex).join('|') + ')(?![\\w-])' +
+        '[ \\t]*([\\[{][^\\n]*?)?[ \\t]*(?=\\r?\\n|```)' +
+        '\\r?\\n?([\\s\\S]*?)```',
+        'gi'
+      );
+    }
+  } catch (err) {
+    // Surface the failure rather than swallowing it: EXEC_FENCE_RE stays null,
+    // so this session won't strip live exec fences until reload (persisted path
+    // stays clean regardless).
+    console.warn('chatRenderer: /api/tools fetch failed; live exec-fence stripping disabled until reload', err);
+  }
+}
+loadExecFenceRegex();
+
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -852,7 +894,8 @@ export function roleTimestamp(when) {
  */
 export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
-  cleaned = cleaned.replace(EXEC_FENCE_RE, '');
+  if (EXEC_FENCE_RE) cleaned = cleaned.replace(EXEC_FENCE_RE, stripExecutedFence);
+
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');
