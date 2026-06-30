@@ -33,6 +33,9 @@ import * as Modals from './modalManager.js';
   let _emailStreamAnimFrame = null;
   let _emailStreamRenderedBody = '';
   let _emailStreamTargetBody = '';
+  let _emailLocalDraftDebounce = null;
+  let _emailRichbodySaveDebounce = null;
+  const _EMAIL_LOCAL_DRAFT_PREFIX = 'odysseus.email.replyDraft.v1:';
 
   // Diff mode state
   let _diffModeActive = false;
@@ -2241,6 +2244,95 @@ import * as Modals from './modalManager.js';
     return header + '\n---\n' + body;
   }
 
+  function _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo) {
+    const uid = String(sourceUid || '').trim();
+    if (!uid) return '';
+    const folder = String(sourceFolder || 'INBOX').trim() || 'INBOX';
+    const msg = String(inReplyTo || '').trim();
+    return _EMAIL_LOCAL_DRAFT_PREFIX + encodeURIComponent(`${folder}|${uid}|${msg}`);
+  }
+
+  function _loadEmailLocalDraft(fields) {
+    const key = _emailLocalDraftKey(fields?.sourceUid, fields?.sourceFolder, fields?.inReplyTo);
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      if (!draft || typeof draft !== 'object') return null;
+      const updatedAt = Number(draft.updatedAt || 0);
+      if (updatedAt && Date.now() - updatedAt > 45 * 24 * 60 * 60 * 1000) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      return draft;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _emailFieldsWithLocalDraft(fields) {
+    const draft = _loadEmailLocalDraft(fields);
+    if (!draft) return fields;
+    return {
+      ...fields,
+      to: draft.to ?? fields.to,
+      cc: draft.cc ?? fields.cc,
+      bcc: draft.bcc ?? fields.bcc,
+      subject: draft.subject ?? fields.subject,
+      inReplyTo: draft.inReplyTo ?? fields.inReplyTo,
+      references: draft.references ?? fields.references,
+      sourceUid: draft.sourceUid ?? fields.sourceUid,
+      sourceFolder: draft.sourceFolder ?? fields.sourceFolder,
+      body: draft.body ?? fields.body,
+    };
+  }
+
+  function _persistEmailLocalDraftNow() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return;
+    const sourceUid = document.getElementById('doc-email-source-uid')?.value || '';
+    const sourceFolder = document.getElementById('doc-email-source-folder')?.value || 'INBOX';
+    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value || '';
+    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);
+    if (!key) return;
+    const rich = document.getElementById('doc-email-richbody');
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (rich && rich.style.display !== 'none') ? rich.innerHTML : (textarea?.value || '');
+    const payload = {
+      to: document.getElementById('doc-email-to')?.value || '',
+      cc: document.getElementById('doc-email-cc')?.value || '',
+      bcc: document.getElementById('doc-email-bcc')?.value || '',
+      subject: document.getElementById('doc-email-subject')?.value || '',
+      inReplyTo,
+      references: document.getElementById('doc-email-references')?.value || '',
+      sourceUid,
+      sourceFolder,
+      body,
+      updatedAt: Date.now(),
+    };
+    try { localStorage.setItem(key, JSON.stringify(payload)); } catch (_) {}
+  }
+
+  function _persistEmailLocalDraftSoon() {
+    clearTimeout(_emailLocalDraftDebounce);
+    _emailLocalDraftDebounce = setTimeout(_persistEmailLocalDraftNow, 800);
+  }
+
+  function _clearEmailLocalDraft(sourceUid, sourceFolder, inReplyTo) {
+    const key = _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo);
+    if (!key) return;
+    try { localStorage.removeItem(key); } catch (_) {}
+  }
+
+  function _clearCurrentEmailLocalDraft() {
+    _clearEmailLocalDraft(
+      document.getElementById('doc-email-source-uid')?.value || '',
+      document.getElementById('doc-email-source-folder')?.value || 'INBOX',
+      document.getElementById('doc-email-in-reply-to')?.value || '',
+    );
+  }
+
   // ── WYSIWYG email body helpers ──
   function _emailBodyToHtml(text) {
     const t = (text || '').trim();
@@ -2264,17 +2356,41 @@ import * as Modals from './modalManager.js';
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
     ta.value = rich.innerText;
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const doc = activeDocId && docs.get(activeDocId);
+    if (doc && doc.language === 'email') {
+      const fields = _parseEmailHeader(doc.content || '');
+      doc.content = _buildEmailContent(
+        document.getElementById('doc-email-to')?.value || fields.to || '',
+        document.getElementById('doc-email-subject')?.value || fields.subject || '',
+        document.getElementById('doc-email-in-reply-to')?.value || fields.inReplyTo || '',
+        document.getElementById('doc-email-references')?.value || fields.references || '',
+        rich.innerHTML,
+        document.getElementById('doc-email-source-uid')?.value || fields.sourceUid || '',
+        document.getElementById('doc-email-source-folder')?.value || fields.sourceFolder || '',
+        document.getElementById('doc-email-cc')?.value || fields.cc || '',
+        document.getElementById('doc-email-bcc')?.value || fields.bcc || '',
+      );
+    }
+  }
+  function _scheduleEmailRichbodySave() {
+    _persistEmailLocalDraftSoon();
+    clearTimeout(_emailRichbodySaveDebounce);
+    _emailRichbodySaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2500);
   }
   function _wireEmailRichbody(rich) {
     if (rich._wired) { _syncEmailRichbody(rich); return; }
     rich._wired = true;
-    rich.addEventListener('input', () => _syncEmailRichbody(rich));
+    rich.addEventListener('input', () => {
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+    });
     // Highlight toolbar buttons (B / I / S, headings, lists) when the caret
     // sits inside formatted text. queryCommandState reflects the live
     // selection — we just translate that into .is-active classes the CSS
     // already understands.
-    const syncActive = () => {
+    let syncActiveFrame = 0;
+    const syncActiveNow = () => {
+      syncActiveFrame = 0;
       if (!rich.isConnected || rich.style.display === 'none') return;
       // Only sync when focus is inside the rich body — otherwise selection
       // outside it (e.g. clicking the toolbar itself) gives misleading state.
@@ -2298,10 +2414,13 @@ import * as Modals from './modalManager.js';
         if (lBtn) lBtn.classList.toggle('is-active', !!inList);
       } catch (_) {}
     };
+    const syncActive = () => {
+      if (syncActiveFrame) return;
+      syncActiveFrame = requestAnimationFrame(syncActiveNow);
+    };
     rich.addEventListener('keyup',    syncActive);
     rich.addEventListener('mouseup',  syncActive);
     rich.addEventListener('focus',    syncActive);
-    rich.addEventListener('input',    syncActive);
     // selectionchange fires on the document; filter to selections inside rich.
     document.addEventListener('selectionchange', () => {
       const sel = window.getSelection();
