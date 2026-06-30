@@ -77,6 +77,7 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 // Dependencies injected via initModelPicker()
 let _deps = null;
 let _autoSelectingDefault = false;
+let _defaultChatPickInFlight = false;
 
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
@@ -89,6 +90,66 @@ function _modelExists(modelId, url) {
     const models = (item.models || []).concat(item.models_extra || []);
     return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
   });
+}
+
+function _firstAvailableModel() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return null;
+  const items = window.modelsModule.getCachedItems() || [];
+  for (const item of items) {
+    if (item.offline) continue;
+    const models = (item.models || []).concat(item.models_extra || []);
+    if (!models.length) continue;
+    return {
+      url: item.url,
+      modelId: models[0],
+      endpointId: item.endpoint_id || '',
+    };
+  }
+  return null;
+}
+
+async function _ensureModelCacheForFallback() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return;
+  const items = window.modelsModule.getCachedItems() || [];
+  if (items.length) return;
+  if (typeof window.modelsModule.refreshModels === 'function') {
+    try { await window.modelsModule.refreshModels(false); } catch (_) {}
+  }
+}
+
+async function _ensureDefaultPendingChat() {
+  if (!_deps || _defaultChatPickInFlight) return;
+  if (_deps.getCurrentSessionId && _deps.getCurrentSessionId()) return;
+  const pending = _deps.getPendingChat && _deps.getPendingChat();
+  if (pending && pending.modelId) return;
+  _defaultChatPickInFlight = true;
+  try {
+    await _ensureModelCacheForFallback();
+    let dc = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+      if (res.ok) dc = await res.json();
+    } catch (_) {}
+    if (dc && dc.endpoint_url && dc.model && _modelExists(dc.model, dc.endpoint_url)) {
+      _deps.setPendingChat({
+        url: dc.endpoint_url,
+        modelId: dc.model,
+        endpointId: dc.endpoint_id || '',
+      });
+      try { window.__odysseusDefaultChat = dc; } catch (_) {}
+      updateModelPicker();
+      return;
+    }
+    // No configured default, or the configured default is gone/offline:
+    // preserve the convenience fallback and keep the picker usable.
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat(fallback);
+      updateModelPicker();
+    }
+  } finally {
+    _defaultChatPickInFlight = false;
+  }
 }
 
 /**
