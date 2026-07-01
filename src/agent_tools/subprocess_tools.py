@@ -110,7 +110,7 @@ class BashTool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,
-            cwd=agent_cwd(),
+            cwd=ctx.get("workspace") or agent_cwd(),
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
@@ -136,7 +136,7 @@ class PythonTool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,
-            cwd=agent_cwd(),
+            cwd=ctx.get("workspace") or agent_cwd(),
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,

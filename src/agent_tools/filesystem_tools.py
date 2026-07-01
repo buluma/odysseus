@@ -46,7 +46,7 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
 
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import _resolve_tool_path, _resolve_tool_path_in_workspace, _resolve_search_root, _truncate
         try:
             args = json.loads(content) if content.strip().startswith("{") else {}
         except (json.JSONDecodeError, TypeError):
@@ -57,8 +57,10 @@ class EditFileTool:
         replace_all = bool(args.get("replace_all", False))
         if not raw_path:
             return {"error": "edit_file: path required", "exit_code": 1}
+        workspace = ctx.get("workspace")
         try:
-            path = _resolve_tool_path(raw_path)
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
         except ValueError as e:
             return {"error": f"edit_file: {e}", "exit_code": 1}
         if old == "":
@@ -106,7 +108,7 @@ class EditFileTool:
 
 class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import _resolve_tool_path, _resolve_tool_path_in_workspace, _resolve_search_root, _truncate
         raw_path, offset, limit = content.split("\n", 1)[0].strip(), 0, 0
         _stripped = content.strip()
         if _stripped.startswith("{"):
@@ -117,8 +119,10 @@ class ReadFileTool:
                 limit = int(_a.get("limit") or 0)
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
+        workspace = ctx.get("workspace")
         try:
-            path = _resolve_tool_path(raw_path)
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
         except ValueError as e:
             return {"error": f"read_file: {e}", "exit_code": 1}
         try:
@@ -156,7 +160,7 @@ class ReadFileTool:
 
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import _resolve_tool_path, _resolve_tool_path_in_workspace, _resolve_search_root, _truncate
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
@@ -175,8 +179,10 @@ class WriteFileTool:
                     body = str(_a.get("content", ""))
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
+        workspace = ctx.get("workspace")
         try:
-            path = _resolve_tool_path(raw_path)
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
         try:
@@ -216,6 +222,7 @@ class LsTool:
                 raw_path = ""
         else:
             raw_path = _s.split("\n", 1)[0].strip()
+        workspace = ctx.get("workspace")
         try:
             root = _resolve_search_root(raw_path, workspace)
         except ValueError as e:
@@ -268,6 +275,7 @@ class GlobTool:
         pattern = str(args.get("pattern", "")).strip()
         if not pattern:
             return {"error": "glob: pattern is required", "exit_code": 1}
+        workspace = ctx.get("workspace")
         try:
             root = _resolve_search_root(str(args.get("path", "")), workspace)
         except ValueError as e:

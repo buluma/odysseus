@@ -278,16 +278,20 @@ def get_mcp_manager():
 def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
-    With a workspace set, the workspace folder is the root and supplied paths are
-    confined inside it (same policy as read_file). Without one, an empty path
-    defaults to the agent's primary root (project data dir) and a supplied path
-    is confined by the global allowlist + sensitive-file policy.
+    With a workspace set (explicit `workspace` argument, or the per-turn
+    context-local binding from execute_tool_block when the caller doesn't
+    thread it through explicitly), the workspace folder is the root and
+    supplied paths are confined inside it (same policy as read_file). Without
+    one, an empty path defaults to the agent's primary root (project data
+    dir) and a supplied path is confined by the global allowlist +
+    sensitive-file policy.
     """
     raw = (raw_path or "").strip()
-    if workspace:
+    ws = workspace or get_active_workspace()
+    if ws:
         if not raw:
-            return os.path.realpath(workspace)
-        return _resolve_tool_path_in_workspace(workspace, raw)
+            return os.path.realpath(ws)
+        return _resolve_tool_path_in_workspace(ws, raw)
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -562,6 +566,7 @@ async def execute_tool_block(
             disabled_tools=disabled_tools,
             owner=owner,
             progress_cb=progress_cb,
+            workspace=workspace,
             tool_policy=tool_policy,
         )
     finally:
@@ -574,6 +579,7 @@ async def _execute_tool_block_impl(
     disabled_tools: Optional[set] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).

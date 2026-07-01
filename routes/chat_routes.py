@@ -1191,7 +1191,6 @@ def setup_chat_routes(
                         workspace=workspace or None,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
-                        workspace=workspace or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
