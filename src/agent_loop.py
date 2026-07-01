@@ -1857,6 +1857,7 @@ async def stream_agent_loop(
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = set() if guide_only else relevant_tools
     _t1 = time.time()
+    _low_signal_workspace_readonly = False
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
@@ -1870,6 +1871,7 @@ async def stream_agent_loop(
             # actually calls for them (RAG retrieval adds those on a real ask).
             from src.tool_security import PLAN_MODE_READONLY_TOOLS
             _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
+            _low_signal_workspace_readonly = True
             logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
         else:
             logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
@@ -1950,8 +1952,10 @@ async def stream_agent_loop(
     # When a workspace is active the model MUST have filesystem + shell tools
     # so it can explore / edit / run commands in the project directory. Without
     # this, small models with RAG-selected tools miss the basics and refuse
-    # to list files, count folders, etc.
-    if _relevant_tools is not None and workspace:
+    # to list files, count folders, etc. Skipped on a low-signal turn: that
+    # branch already deliberately narrowed to read-only tools above, and this
+    # force-include would silently undo it.
+    if _relevant_tools is not None and workspace and not _low_signal_workspace_readonly:
         _relevant_tools.update({
             "bash", "python", "read_file", "write_file", "edit_file",
             "ls", "glob", "grep",
