@@ -948,6 +948,7 @@ def _build_system_prompt(
     # the trusted system role. Bound up front so the insert block below can
     # always check it.
     _skills_message = None
+    _email_message = None
     _email_style_message = None
     _integ_message = None
     _mcp_desc_message = None
