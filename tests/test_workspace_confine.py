@@ -319,4 +319,3 @@ def test_request_workspace_gate(ws, monkeypatch):
     monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: True)
     assert cr._resolve_request_workspace(object(), ws) == (os.path.realpath(ws), "")
     assert cr._resolve_request_workspace(object(), "/nonexistent/xyz") == ("", "/nonexistent/xyz")
->>>>>>> ba43c73 (fix(agent): confine glob literal lookups to the search root (#5010))
