@@ -242,11 +242,11 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
-    ctx = _query_context_length(endpoint_url, model)
-    # Only cache non-default values to allow retry on next request.
+    ctx, known = _query_context_length(endpoint_url, model)
+    # Only cache non-default (known) values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    if not is_local and (known or configured_kind in ("api", "proxy")):
         _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
@@ -385,7 +385,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                     n_ctx = slots[0].get("n_ctx")
                     if n_ctx and isinstance(n_ctx, int) and n_ctx > 0:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
-                        return n_ctx
+                        return n_ctx, True
         except Exception:
             pass
 
@@ -397,7 +397,8 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     if is_copilot_base(endpoint_url):
         if known:
             logger.info(f"Using known context window for {model}: {known}")
-        return known or DEFAULT_CONTEXT
+            return known, True
+        return DEFAULT_CONTEXT, False
 
     from src.endpoint_resolver import build_models_url
 
@@ -422,18 +423,18 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         _is_local = is_local_endpoint(endpoint_url)
         if _is_local and api_ctx < known:
             logger.info(f"Local endpoint reports {api_ctx} for {model} (known max: {known}) — using API value")
-            return api_ctx
+            return api_ctx, True
         result = max(api_ctx, known)
         if api_ctx < known:
             logger.info(f"API reported {api_ctx} for {model}, using known {known} instead")
-        return result
+        return result, True
     if api_ctx:
-        return api_ctx
+        return api_ctx, True
     if known:
         logger.info(f"Using known context window for {model}: {known}")
-        return known
+        return known, True
 
-    return DEFAULT_CONTEXT
+    return DEFAULT_CONTEXT, False
 
 
 def estimate_tokens(messages: List[Dict]) -> int:

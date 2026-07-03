@@ -32,6 +32,14 @@ BUILTIN_EMAIL_TOOLS = frozenset({
 })
 
 
+# Argument key tool_execution injects into email MCP tool calls so the server
+# can eventually scope results per-caller. mcp_servers/email_server.py doesn't
+# consume it yet (unused keys are silently ignored, so this is a no-op today,
+# not a behavior change) — it's read here so the injection site and any
+# future consumer share one name instead of a hardcoded string drifting apart.
+_EMAIL_MCP_OWNER_ARG = "_odysseus_owner"
+
+
 # Tools regular/public users must not execute directly. These either expose
 # server/runtime access, sensitive user data, external messaging, persistent
 # state changes, or generic loopback/integration surfaces. All email tools are

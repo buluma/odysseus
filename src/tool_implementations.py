@@ -13,6 +13,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.tool_security import BUILTIN_EMAIL_TOOLS
 from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
 
@@ -1241,7 +1242,12 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "tasks": ["manage_tasks"],
                 "notes": ["manage_notes"],
                 "calendar": ["manage_calendar"],
-                "email": ["mcp__email__list_emails", "mcp__email__read_email", "mcp__email__send_email"],
+                # Both spellings so the toggle blocks bare-fence dispatch
+                # (Ollama etc.) and native mcp__email__* calls alike; derived
+                # from BUILTIN_EMAIL_TOOLS so a tool added to the email server
+                # can't silently stay disable-able only by name or only by
+                # mcp__ form.
+                "email": sorted(BUILTIN_EMAIL_TOOLS) + sorted(f"mcp__email__{t}" for t in BUILTIN_EMAIL_TOOLS),
                 "research": ["web_search"],  # research is a per-request flag, not a tool — closest analog
             }
 
