@@ -1248,7 +1248,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
     except Exception as e:
-        raise HTTPException(502, f"POST {target_url} failed: {e}")
+        logger.error(f"POST {target_url} failed: {e}")
+        raise HTTPException(502, f"POST {target_url} failed")
     if not r.is_success:
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
@@ -1487,13 +1488,13 @@ async def llm_call_async(
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
-                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
             if attempt >= max_retries:
-                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
+                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
@@ -1638,7 +1639,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
             logger.error(f"ChatGPT Subscription stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": "Unexpected error", "status": 502})}\n\n'
         return
 
     # ── Native Ollama streaming ──
@@ -1700,7 +1701,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
             logger.error(f"Ollama stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": "Unexpected error", "status": 502})}\n\n'
         return
 
     # ── Anthropic streaming ──
@@ -1807,7 +1808,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": "Unexpected error", "status": 502})}\n\n'
         return
 
     # ── OpenAI-compatible streaming ──
@@ -2074,7 +2075,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
     except Exception as e:
         logger.error(f"Stream error: {e}")
-        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        yield f'event: error\ndata: {json.dumps({"error": "Unexpected error", "status": 502})}\n\n'
 
 
 def _summarize_stream_error(err_chunk: Optional[str]) -> str:

@@ -623,7 +623,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             return HTMLResponse(_oauth_result_page("Error", str(e.detail)), status_code=e.status_code)
         except Exception as e:
             logger.exception(f"OAuth callback error: {e}")
-            return HTMLResponse(_oauth_result_page("Error", str(e)), status_code=500)
+            return HTMLResponse(_oauth_result_page("Error", "Unexpected error"), status_code=500)
         finally:
             db.close()
 

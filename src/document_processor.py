@@ -153,7 +153,8 @@ def _process_pdf(path: str, owner: str | None = None) -> str:
             return "\n\n[PDF processed but no readable content found]"
 
     except Exception as e:
-        return f"\n\n[PDF processing failed: {str(e)}]"
+        logger.error(f"PDF processing failed: {e}")
+        return "\n\n[PDF processing failed]"
 
 
 def _truncate_inline(text: str, limit: int = 15000) -> tuple[str, str]:

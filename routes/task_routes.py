@@ -1153,6 +1153,6 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return {"success": True, "draft": out}
         except Exception as e:
             logger.error(f"parse_task failed: {e}")
-            return {"success": False, "message": str(e)}
+            return {"success": False, "message": "Failed to parse task"}
 
     return router

@@ -1576,7 +1576,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Unknown action: {action}. Use list/add/update/delete/toggle_item", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_notes error: {e}")
-        return {"error": str(e), "exit_code": 1}
+        return {"error": "manage_notes failed", "exit_code": 1}
     finally:
         db.close()
 

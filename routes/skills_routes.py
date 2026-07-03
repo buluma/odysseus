@@ -1172,7 +1172,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
         except Exception as e:
-            return {"builtin": [], "count": 0, "error": str(e)}
+            logger.error(f"Failed to load builtin tool sections: {e}")
+            return {"builtin": [], "count": 0, "error": "Failed to load builtin tools"}
 
         overrides = get_builtin_overrides()
         out = []

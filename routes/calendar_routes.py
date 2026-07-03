@@ -1432,7 +1432,8 @@ def setup_calendar_routes() -> APIRouter:
                 timeout=20,
             )
         except Exception as e:
-            return {"ok": False, "error": f"LLM call failed: {e}"}
+            logger.error(f"Calendar quick-add LLM call failed: {e}")
+            return {"ok": False, "error": "LLM call failed"}
 
         cleaned = strip_think(raw or "", prose=False, prompt_echo=True)
         cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=_re.MULTILINE).strip()
@@ -1442,7 +1443,8 @@ def setup_calendar_routes() -> APIRouter:
         try:
             parsed = _json.loads(m.group())
         except Exception as e:
-            return {"ok": False, "error": f"Invalid JSON: {e}", "raw": cleaned[:400]}
+            logger.error(f"Calendar quick-add JSON parse failed: {e}")
+            return {"ok": False, "error": "Invalid JSON", "raw": cleaned[:400]}
 
         # Light validation / defaults so the frontend can trust the shape.
         summary = (parsed.get("summary") or text)[:200]

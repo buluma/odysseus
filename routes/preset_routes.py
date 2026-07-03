@@ -107,7 +107,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
             return {"success": True, "prompt": result.strip()}
         except Exception as e:
             logger.error(f"Expand prompt failed: {e}")
-            return {"success": False, "message": str(e)}
+            return {"success": False, "message": "Failed to expand prompt"}
 
     # ── Group presets ──
     @router.get("/api/presets/groups")

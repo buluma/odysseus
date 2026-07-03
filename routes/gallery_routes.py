@@ -393,7 +393,8 @@ def setup_gallery_routes() -> APIRouter:
                 # Fallback: no upscale endpoint — return error
                 return {"error": f"Upscale endpoint not available ({resp.status_code})"}
         except Exception as e:
-            return {"error": str(e)}
+            logger.error(f"Remote upscale failed: {e}")
+            return {"error": "Upscale failed"}
 
     # ---- POST /api/gallery/style-transfer ----
     @router.post("/api/gallery/style-transfer")
@@ -439,7 +440,8 @@ def setup_gallery_routes() -> APIRouter:
                         return {"image": img_data}
                 return {"error": f"Style transfer failed ({resp.status_code})"}
         except Exception as e:
-            return {"error": str(e)}
+            logger.error(f"Style transfer failed: {e}")
+            return {"error": "Style transfer failed"}
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
@@ -1500,7 +1502,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"image": base64.b64encode(buf.getvalue()).decode()}
         except Exception as e:
             logger.warning(f"Denoise failed: {e}")
-            return {"error": f"Denoise failed: {e}"}
+            return {"error": "Denoise failed"}
 
     # ---- POST /api/image/upscale-local ----
     # Local Real-ESRGAN upscale (2× or 4×). Self-contained — no diffusion
@@ -1548,7 +1550,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"image": base64.b64encode(buf.getvalue()).decode()}
         except Exception as e:
             logger.warning(f"Upscale failed: {e}")
-            return {"error": f"Upscale failed: {e}"}
+            return {"error": "Upscale failed"}
 
     # ---- POST /api/image/remove-bg ----
     @router.post("/api/image/remove-bg")
@@ -1922,7 +1924,7 @@ def setup_gallery_routes() -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"AI tagging failed: {e}")
-            return {"error": str(e)}
+            return {"error": "AI tagging failed"}
         finally:
             db.close()
 

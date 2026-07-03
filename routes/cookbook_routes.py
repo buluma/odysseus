@@ -849,7 +849,7 @@ def setup_cookbook_routes() -> APIRouter:
                 _launch_local_detached(session_id, lines)
             except Exception as e:
                 logger.error(f"Local detached download launch failed: {e}")
-                return {"ok": False, "error": str(e), "session_id": session_id}
+                return {"ok": False, "error": "Failed to launch download", "session_id": session_id}
         else:
             proc = await asyncio.create_subprocess_shell(
                 setup_cmd,
@@ -1734,7 +1734,7 @@ def setup_cookbook_routes() -> APIRouter:
                 _launch_local_detached(session_id, runner_lines)
             except Exception as e:
                 logger.error(f"Local detached serve launch failed: {e}")
-                return {"ok": False, "error": str(e), "session_id": session_id}
+                return {"ok": False, "error": "Failed to launch serve process", "session_id": session_id}
         else:
             proc = await asyncio.create_subprocess_shell(
                 setup_cmd,
