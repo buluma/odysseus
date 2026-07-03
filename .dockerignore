@@ -10,6 +10,13 @@ dist/
 build/
 .env
 .env.bak.*
+secrets.env
+secrets.env.*
+secrets.env~
+.secrets.env.swp
+.secrets.env.swo
+**/#secrets.env#
+!secrets.env.example
 /data/
 /logs/
 .git/
