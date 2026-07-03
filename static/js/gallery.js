@@ -1418,7 +1418,7 @@ function _openDetail(img) {
         ${editedHtml}
         <div class="gallery-detail-section">
           <label>Dimensions</label>
-          <div>${dims}${fileSize ? ` (${fileSize})` : ''}</div>
+          <div>${_esc(dims)}${fileSize ? ` (${_esc(fileSize)})` : ''}</div>
         </div>
         ${img.camera ? `<div class="gallery-detail-section"><label>Camera</label><div>${_esc(img.camera)}</div></div>` : ''}
         ${img.gps ? `<div class="gallery-detail-section"><label>Location</label><div>${_esc(img.gps.lat)}, ${_esc(img.gps.lng)}</div></div>` : ''}

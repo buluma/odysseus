@@ -869,7 +869,7 @@ async function handleSetupWizard(mode, input) {
       tm.applyTheme(name);
       await typewriterReply(`Theme switched to "${name}".`);
     } else {
-      slashReply(`Unknown theme "${name}". Try /theme to see available themes.`);
+      slashReply(`Unknown theme "${uiModule.esc(name)}". Try /theme to see available themes.`);
     }
     return;
   }
@@ -1457,7 +1457,7 @@ async function _cmdTheme(args, ctx) {
   const customNames = Object.keys(custom);
   const presetNames = tm && tm.THEMES ? Object.keys(tm.THEMES) : [];
   if (!sub || !tm || !tm.THEMES) {
-    const customLabel = customNames.length ? `\nCustom: ${customNames.join(', ')}` : '';
+    const customLabel = customNames.length ? `\nCustom: ${customNames.map(uiModule.esc).join(', ')}` : '';
     slashReply(`Usage:\n  /theme &lt;name&gt; — Apply a preset or custom theme\n  /theme save &lt;name&gt; — Save current colors as a custom theme\n  /theme delete &lt;name&gt; — Delete a custom theme\nPresets: ${presetNames.join(', ')}${customLabel}`);
     return true;
   }
@@ -1487,8 +1487,8 @@ async function _cmdTheme(args, ctx) {
   const name = sub;
   const colors = tm.THEMES[name] || custom[name];
   if (!colors) {
-    const customLabel = customNames.length ? ` | Custom: ${customNames.join(', ')}` : '';
-    slashReply(`Unknown theme "${name}". Available: ${presetNames.join(', ')}${customLabel}`);
+    const customLabel = customNames.length ? ` | Custom: ${customNames.map(uiModule.esc).join(', ')}` : '';
+    slashReply(`Unknown theme "${uiModule.esc(name)}". Available: ${presetNames.join(', ')}${customLabel}`);
     return true;
   }
   tm.applyColors(colors);
@@ -5145,8 +5145,8 @@ async function _cmdSetup(args, ctx) {
           tm.save(themeName, colors);
           await typewriterReply(`Theme: ${themeName}`);
         } else {
-          const customLabel = customKeys.length ? ` | Custom: ${customKeys.join(', ')}` : '';
-          slashReply(`Unknown theme "${themeName}". Available: ${presets.join(', ')}${customLabel}`);
+          const customLabel = customKeys.length ? ` | Custom: ${customKeys.map(uiModule.esc).join(', ')}` : '';
+          slashReply(`Unknown theme "${uiModule.esc(themeName)}". Available: ${presets.join(', ')}${customLabel}`);
         }
         return true;
       }

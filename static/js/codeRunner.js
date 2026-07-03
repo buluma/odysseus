@@ -355,24 +355,23 @@ export async function runServer(code, panel, lang) {
 }
 
 /**
- * Run HTML code in its own popup window
+ * Run HTML code in a sandboxed iframe rendered inline in the panel.
+ *
+ * Previously opened a same-origin popup via window.open('') + document.write,
+ * which runs the code block's content with the app's own origin — a
+ * prompt-injected or pasted malicious block could reach cookies/localStorage/
+ * the authenticated session if the user clicked Run. The sandbox attribute
+ * (no allow-same-origin) gives the iframe an opaque origin instead, same as
+ * document.js's doc-html-preview and runJavaScript() above.
  */
 export function runHTML(code, panel) {
   panel.innerHTML = '';
 
-  const win = window.open('', '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
-  if (!win) {
-    showOutput(panel, 'Popup blocked — please allow popups for this site.', true);
-    addCloseBtn(panel);
-    return;
-  }
-  try { win.opener = null; } catch (_) {}
-  win.document.open();
-  win.document.write(code);
-  win.document.close();
-
-  showOutput(panel, 'Opened in new window', false);
-  addCloseBtn(panel);
+  const iframe = document.createElement('iframe');
+  iframe.className = 'code-runner-html-frame';
+  iframe.sandbox = 'allow-scripts allow-modals';
+  iframe.srcdoc = code;
+  panel.appendChild(iframe);
 }
 
 /**
