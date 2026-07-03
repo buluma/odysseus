@@ -6550,7 +6550,7 @@ function _resolveCommand(cmd) {
 /** Resolve a subcommand within a command definition, checking sub aliases */
 function _resolveSubcommand(def, sub) {
   if (!def.subs) return null;
-  if (def.subs[sub]) return sub;
+  if (Object.prototype.hasOwnProperty.call(def.subs, sub)) return sub;
   for (const [name, sDef] of Object.entries(def.subs)) {
     if (sDef.alias && sDef.alias.includes(sub)) return name;
   }
@@ -6667,7 +6667,7 @@ async function handleSlashCommand(input) {
           // Help for specific subcommand
           if (wantsHelp || subArgs.includes('--help') || subArgs.includes('-h')) {
             const usage = subDef.usage || `/${cmdKey} ${subKey}`;
-            slashReply(`<pre>${usage}\n${subDef.help || 'No help available.'}</pre>`);
+            slashReply(`<pre>${uiModule.esc(usage)}\n${uiModule.esc(subDef.help || 'No help available.')}</pre>`);
             return true;
           }
           return await subDef.handler(subArgs, ctx);

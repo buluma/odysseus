@@ -779,19 +779,25 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     let _origBody = (typeof data.body === 'string' && data.body.length) ? data.body : '';
     if (!_origBody && typeof data.body_html === 'string' && data.body_html) {
       _origBody = data.body_html
+        .replace(/&nbsp;/g, ' ')
+        // &amp; unescaped last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;") into a
+        // real "<" one pass early (CodeQL js/double-escaping).
+        //
+        // This whole entity-unescape block runs BEFORE tag-stripping below,
+        // not after — an already-escaped "&lt;script&gt;" in the source is
+        // just text, but unescaping it AFTER the tag strip would resurrect
+        // a live <script> tag past the point that's supposed to remove it
+        // (CodeQL js/incomplete-multi-character-sanitization).
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
         .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
         .replace(/<script[\s\S]*?(?:<\/script[^>]*>|$)/gi, '')
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>/gi, '\n\n')
         .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        // &amp; unescaped last, not first — decoding it first would turn an
-        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;") into a
-        // real "<" one pass early (CodeQL js/double-escaping).
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
     }
