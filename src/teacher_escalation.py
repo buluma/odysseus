@@ -589,7 +589,7 @@ async def run_teacher_inline(
         yield (
             'data: ' + json.dumps({
                 "type": "escalation_failed",
-                "reason": f"teacher endpoint not resolvable: {e}",
+                "reason": "teacher endpoint not resolvable",
             }) + '\n\n'
         )
         return

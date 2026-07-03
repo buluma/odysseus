@@ -135,7 +135,7 @@ export function _foldSummary(label, iconSvg, meta) {
 export function _extractQuoteMeta(html) {
   if (typeof html !== 'string' || !html) return '';
   const txt = html
-    .replace(/<style[\s\S]*?<\/style[^>]*>/gi, '')
+    .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     // Unescape the escape character (&amp;) LAST, not first — decoding it
@@ -217,8 +217,8 @@ export function _peelSigNameLine(htmlAfterClosing) {
 export function _isBloatedSig(htmlFragment) {
   if (!htmlFragment) return false;
   const plain = htmlFragment
-    .replace(/<style[\s\S]*?<\/style[^>]*>/gi, '')
-    .replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
+    .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
+    .replace(/<script[\s\S]*?(?:<\/script[^>]*>|$)/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     // &amp; unescaped last — see _extractQuoteMeta above (CodeQL js/double-escaping).
