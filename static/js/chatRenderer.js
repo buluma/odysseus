@@ -1967,7 +1967,7 @@ export function displayMetrics(messageElement, metrics) {
           } catch (err) {
             clearInterval(waveInterval);
             console.warn('compact failed:', err);
-            compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed: ' + err.message + '</span>';
+            compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed: ' + uiModule.esc(err.message || String(err)) + '</span>';
           }
         });
       }

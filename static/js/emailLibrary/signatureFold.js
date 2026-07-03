@@ -135,13 +135,16 @@ export function _foldSummary(label, iconSvg, meta) {
 export function _extractQuoteMeta(html) {
   if (typeof html !== 'string' || !html) return '';
   const txt = html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<style[\s\S]*?<\/style[^>]*>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
+    // Unescape the escape character (&amp;) LAST, not first — decoding it
+    // first would turn a literal, already-escaped "&lt;" (i.e. the text
+    // "&amp;lt;") into a real "<" one pass early (CodeQL js/double-escaping).
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
     .replace(/\s+/g, ' ')
     .slice(0, 1500);
 
@@ -214,11 +217,12 @@ export function _peelSigNameLine(htmlAfterClosing) {
 export function _isBloatedSig(htmlFragment) {
   if (!htmlFragment) return false;
   const plain = htmlFragment
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style[^>]*>/gi, '')
+    .replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    // &amp; unescaped last — see _extractQuoteMeta above (CodeQL js/double-escaping).
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim();
   return plain.length >= _SIG_BLOAT_MIN_CHARS;

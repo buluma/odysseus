@@ -1235,7 +1235,7 @@ export function initThemeUI() {
       _saveFull('custom', colors);
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
       const prev = document.getElementById('harmony-preview');
-      if (prev) prev.innerHTML = [colors.bg, colors.panel, colors.fg, colors.border, colors.red].map(c => `<span style="background:${c}"></span>`).join('');
+      if (prev) prev.innerHTML = [colors.bg, colors.panel, colors.fg, colors.border, colors.red].map(c => `<span style="background:${uiModule.esc(c)}"></span>`).join('');
     });
   }
   if (harmonyAccentEl) {
@@ -1252,7 +1252,7 @@ export function initThemeUI() {
       const mode = document.getElementById('harmony-mode').value;
       const colors = generateHarmonyColors(newAcc.value, type, mode);
       const prev = document.getElementById('harmony-preview');
-      if (prev) prev.innerHTML = [colors.bg, colors.panel, colors.fg, colors.border, colors.red].map(c => `<span style="background:${c}"></span>`).join('');
+      if (prev) prev.innerHTML = [colors.bg, colors.panel, colors.fg, colors.border, colors.red].map(c => `<span style="background:${uiModule.esc(c)}"></span>`).join('');
       // Sync the hex chip beside the picker.
       const hex = document.getElementById('harmony-accent-hex');
       if (hex) hex.textContent = newAcc.value;

@@ -779,16 +779,19 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     let _origBody = (typeof data.body === 'string' && data.body.length) ? data.body : '';
     if (!_origBody && typeof data.body_html === 'string' && data.body_html) {
       _origBody = data.body_html
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style[^>]*>/gi, '')
+        .replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>/gi, '\n\n')
         .replace(/<[^>]+>/g, '')
         .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
+        // &amp; unescaped last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;") into a
+        // real "<" one pass early (CodeQL js/double-escaping).
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
     }

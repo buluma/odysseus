@@ -603,12 +603,18 @@ function detectProvider(input) {
       if (url.endsWith(suffix)) url = url.slice(0, -suffix.length).replace(/\/+$/, '');
     }
     url = url.replace(/\/api\/(chat|tags|generate)\/?$/i, '/api');
+    // Match the real ollama.com host or a subdomain of it — a plain
+    // `.endsWith('ollama.com')`/`.includes('ollama.com')` string check would
+    // also match unrelated hosts like "evil-ollama.com" (CodeQL
+    // js/incomplete-url-substring-sanitization).
+    let isOllamaCloud = false;
     try {
       const parsed = new URL(url);
-      if (parsed.hostname.endsWith('ollama.com')) url = 'https://ollama.com/api';
+      isOllamaCloud = parsed.hostname === 'ollama.com' || parsed.hostname.endsWith('.ollama.com');
+      if (isOllamaCloud) url = 'https://ollama.com/api';
     } catch(e) {}
     // Add /v1 if bare host:port
-    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.') && !url.includes('ollama.com')) url += '/v1';
+    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.') && !isOllamaCloud) url += '/v1';
     return { base_url: url, api_key: '', name: '' };
   }
   // Known key patterns
@@ -629,7 +635,15 @@ function detectProvider(input) {
 function setupChatUrlForEndpoint(detected) {
   const base = (detected.base_url || '').replace(/\/+$/, '');
   if (detected.name === 'Anthropic') return base.replace(/\/v1$/, '') + '/v1/messages';
-  if (base.includes('ollama.com')) return 'https://ollama.com/api/chat';
+  // Match the real ollama.com host or a subdomain of it, not just any URL
+  // that happens to contain the substring "ollama.com" somewhere in it
+  // (CodeQL js/incomplete-url-substring-sanitization).
+  let isOllamaCloud = false;
+  try {
+    const h = new URL(base).hostname;
+    isOllamaCloud = h === 'ollama.com' || h.endsWith('.ollama.com');
+  } catch (e) {}
+  if (isOllamaCloud) return 'https://ollama.com/api/chat';
   return base + '/chat/completions';
 }
 
@@ -1954,7 +1968,7 @@ async function _cmdSearch(args, ctx) {
     const lines = results.slice(0, 20).map(r => {
       const name = ctx.esc(r.session_name || r.name || 'Untitled');
       const snippet = ctx.esc((r.content_snippet || r.content || r.snippet || '').slice(0, 100));
-      const sid = r.session_id || '';
+      const sid = ctx.esc(r.session_id || '');
       return `<a href="#${sid}" style="color:var(--red);text-decoration:none">${name}</a>  ${snippet}`;
     });
     slashReply(`<pre>${lines.join('\n')}</pre>`);
@@ -5878,8 +5892,8 @@ async function _cmdHomelabEvents(args, ctx) {
     if (!events.length) { slashReply('No open events.'); return true; }
     const lines = [`${events.length} open event(s):`, ''];
     for (const ev of events) {
-      const sev = (ev.severity || 'info').toUpperCase();
-      const status = ev.status || '?';
+      const sev = ctx.esc((ev.severity || 'info').toUpperCase());
+      const status = ctx.esc(ev.status || '?');
       const svc = ctx.esc(ev.service || '?');
       const title = ctx.esc(ev.title || ev.summary || '');
       lines.push(`  [${sev}/${status}] ${svc}: ${title}`);
@@ -5941,7 +5955,7 @@ async function _cmdTicketsSearch(args, ctx) {
     if (!tickets.length) { slashReply('No matching tickets.'); return true; }
     const lines = [`${tickets.length} result(s) for "${ctx.esc(query)}":`, ''];
     for (const t of tickets) {
-      const id = t.id || t.issue_id || '?';
+      const id = ctx.esc(t.id || t.issue_id || '?');
       const subject = ctx.esc(t.subject || t.title || '(no subject)');
       const status = t.status || t.status_name || '';
       lines.push(`  #${id} ${subject}${status ? ` (${ctx.esc(status)})` : ''}`);
