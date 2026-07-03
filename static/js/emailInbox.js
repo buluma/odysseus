@@ -9,6 +9,7 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
+import { _stripUntilStable } from './emailLibrary/utils.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
@@ -778,7 +779,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     // and the reply doc opens empty (data.body.split throws).
     let _origBody = (typeof data.body === 'string' && data.body.length) ? data.body : '';
     if (!_origBody && typeof data.body_html === 'string' && data.body_html) {
-      _origBody = data.body_html
+      let _plain = data.body_html
         .replace(/&nbsp;/g, ' ')
         // &amp; unescaped last, not first — decoding it first would turn an
         // already-escaped literal "&lt;" (i.e. the text "&amp;lt;") into a
@@ -792,9 +793,16 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
-        .replace(/<script[\s\S]*?(?:<\/script[^>]*>|$)/gi, '')
+        .replace(/&amp;/g, '&');
+      // _stripUntilStable, not a single .replace() — a lazy "<style ...
+      // </style>" scan only removes the FIRST closer it finds, so a crafted
+      // "<styl<style>x</style>e>" splices back into a live tag once the
+      // inner match is excised. Re-running the regex to a fixed point
+      // catches the reconstructed tag (CodeQL js/incomplete-multi-character-
+      // sanitization — this is CodeQL's own documented exploit shape).
+      _plain = _stripUntilStable(_plain, /<style[\s\S]*?(?:<\/style[^>]*>|$)/gi);
+      _plain = _stripUntilStable(_plain, /<script[\s\S]*?(?:<\/script[^>]*>|$)/gi);
+      _origBody = _plain
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>/gi, '\n\n')
         .replace(/<[^>]+>/g, '')

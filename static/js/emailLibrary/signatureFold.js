@@ -12,7 +12,7 @@
 
 import {
   _TALON_WROTE, _TALON_FROM, _TALON_SENT, _TALON_ORIG_RE,
-  _SIG_BLOAT_MIN_CHARS,
+  _SIG_BLOAT_MIN_CHARS, _stripUntilStable,
 } from './utils.js';
 
 // No leading icon on the signature fold — the user explicitly does not
@@ -134,8 +134,10 @@ export function _foldSummary(label, iconSvg, meta) {
 // "Jane Doe · Mon, Apr 18, 2026 at 9:31 AM" or `''`.
 export function _extractQuoteMeta(html) {
   if (typeof html !== 'string' || !html) return '';
-  const txt = html
-    .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
+  // _stripUntilStable, not a single .replace() — see emailInbox.js's
+  // _origBody derivation for why a single lazy "<style ... </style>" pass
+  // is incomplete (CodeQL js/incomplete-multi-character-sanitization).
+  const txt = _stripUntilStable(html, /<style[\s\S]*?(?:<\/style[^>]*>|$)/gi)
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     // Unescape the escape character (&amp;) LAST, not first — decoding it
@@ -216,9 +218,12 @@ export function _peelSigNameLine(htmlAfterClosing) {
 
 export function _isBloatedSig(htmlFragment) {
   if (!htmlFragment) return false;
-  const plain = htmlFragment
-    .replace(/<style[\s\S]*?(?:<\/style[^>]*>|$)/gi, '')
-    .replace(/<script[\s\S]*?(?:<\/script[^>]*>|$)/gi, '')
+  // _stripUntilStable — see emailInbox.js's _origBody derivation (CodeQL
+  // js/incomplete-multi-character-sanitization: a single lazy pass over
+  // <style>/<script> can be spliced back into a live tag).
+  let plain = _stripUntilStable(htmlFragment, /<style[\s\S]*?(?:<\/style[^>]*>|$)/gi);
+  plain = _stripUntilStable(plain, /<script[\s\S]*?(?:<\/script[^>]*>|$)/gi);
+  plain = plain
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     // &amp; unescaped last — see _extractQuoteMeta above (CodeQL js/double-escaping).
