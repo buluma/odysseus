@@ -53,7 +53,8 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
-    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _append_vllm_linux_preflight_lines, _normalize_llama_cpp_python_cache_types,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
@@ -427,6 +428,79 @@ def setup_cookbook_routes() -> APIRouter:
 
     def _load_stored_hf_token() -> str:
         return load_stored_hf_token(state_path=_cookbook_state_path)
+
+    def _normalize_minimax_m3_vllm_cmd(cmd: str) -> str:
+        """Patch MiniMax M3 vLLM launches into the known-good local form.
+
+        The browser form can be stale or omit advanced-only fields. MiniMax M3
+        is sensitive to several flags: using the HF repo id with block-size 128
+        fails KV-cache setup, and FlashInfer sampler JIT fails on this host's
+        system nvcc. Normalize server-side before writing the tmux runner.
+        """
+        cmd_lower = (cmd or "").lower()
+        if not cmd or "vllm serve" not in cmd_lower or "minimax" not in cmd_lower or "m3" not in cmd_lower:
+            return cmd
+        try:
+            parts = shlex.split(cmd)
+        except ValueError:
+            return cmd
+        if "serve" not in parts:
+            return cmd
+
+        env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+        env_parts = [p for p in parts if env_re.match(p)]
+        body = [p for p in parts if not env_re.match(p)]
+        try:
+            serve_i = body.index("serve")
+        except ValueError:
+            return cmd
+        if serve_i + 1 >= len(body):
+            return cmd
+
+        repo_id = "cyankiwi/MiniMax-M3-AWQ-INT4"
+        snapshot = (
+            "/home/pewds/.cache/huggingface/hub/"
+            "models--cyankiwi--MiniMax-M3-AWQ-INT4/"
+            "snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b"
+        )
+        if body[serve_i + 1] == repo_id:
+            body[serve_i + 1] = snapshot
+
+        def add_env(key: str, value: str) -> None:
+            if not any(p.startswith(f"{key}=") for p in env_parts):
+                env_parts.append(f"{key}={value}")
+
+        def has_flag(flag: str) -> bool:
+            return any(p == flag or p.startswith(flag + "=") for p in body)
+
+        def set_flag(flag: str, value: str) -> None:
+            for i, part in enumerate(body):
+                if part == flag:
+                    if i + 1 < len(body):
+                        body[i + 1] = value
+                    else:
+                        body.append(value)
+                    return
+                if part.startswith(flag + "="):
+                    body[i] = f"{flag}={value}"
+                    return
+            body.extend([flag, value])
+
+        def add_bool(flag: str) -> None:
+            if not has_flag(flag):
+                body.append(flag)
+
+        add_env("VLLM_TARGET_DEVICE", "cuda")
+        add_env("VLLM_USE_FLASHINFER_SAMPLER", "0")
+        set_flag("--served-model-name", repo_id)
+        set_flag("--tool-call-parser", "minimax_m3")
+        set_flag("--reasoning-parser", "minimax_m3")
+        set_flag("--attention-backend", "TRITON_ATTN")
+        set_flag("--block-size", "128")
+        add_bool("--language-model-only")
+        add_bool("--disable-custom-all-reduce")
+        add_bool("--enable-expert-parallel")
+        return shlex.join(env_parts + body)
 
     def _cookbook_ssh_dir() -> Path:
         # The Docker image keeps cookbook keys under /app/.ssh; that path only

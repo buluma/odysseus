@@ -87,11 +87,14 @@ app = FastAPI(
 
 # ========= CORS =========
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
+# PATCH is required — session settings, api tokens, document, gallery, mcp
+# servers, webhooks, model-endpoints, and session routes all use it.
+CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=CORS_ALLOW_METHODS,
     allow_headers=[
         "Accept",
         "Authorization",

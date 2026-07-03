@@ -22,8 +22,8 @@ markers only - it moves no files and changes no test behavior. Use them to run a
 focused slice:
 
 ```bash
-python3 -m pytest -m area_security
-python3 -m pytest -m "area_services and sub_cookbook"
+venv/bin/python -m pytest -m area_security
+venv/bin/python -m pytest -m "area_services and sub_cookbook"
 ```
 
 Areas are `security`, `routes`, `services`, `cli`, `js`, `helpers`, `unit`, and
@@ -79,8 +79,8 @@ replace the full suite before merge. A `slow` mark only excludes a test from the
 fast lane; the test stays runnable directly, e.g.:
 
 ```bash
-python3 -m pytest tests/test_auth_config_lock_concurrency.py
-python3 -m pytest -m slow
+venv/bin/python -m pytest tests/test_auth_config_lock_concurrency.py
+venv/bin/python -m pytest -m slow
 ```
 
 ## Core principles
@@ -183,10 +183,10 @@ helpers:
 Run validation locally before opening or approving a PR. Practical checks:
 
 - `git diff --check` - catch whitespace and conflict-marker errors.
-- `python3 -m py_compile <changed files>` - confirm changed files compile.
-- Focused `pytest` on the changed test files.
-- `pytest` on neighboring or order-sensitive test groups that share import
-  state with the changed files.
+- `venv/bin/python -m py_compile <changed files>` - confirm changed files compile.
+- Focused `venv/bin/python -m pytest` on the changed test files.
+- `venv/bin/python -m pytest` on neighboring or order-sensitive test groups that
+  share import state with the changed files.
 - `grep` for the old boilerplate when replacing it, to confirm no stragglers
   remain.
 - A fresh audit worktree when changing the helpers themselves, so stale
