@@ -1200,7 +1200,7 @@ async function _cmdSessionExport(args, ctx) {
   const params = new URLSearchParams({ fmt });
   if (filename) params.set('filename', filename);
   window.open(`${API_BASE}/api/session/${ctx.sid}/export?${params}`, '_blank');
-  slashReply(`Exporting as .${fmt}${filename ? ' → ' + filename : ''}...`);
+  slashReply(`Exporting as .${fmt}${filename ? ' → ' + ctx.esc(filename) : ''}...`);
   return true;
 }
 
