@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import (
     BUILTIN_EMAIL_TOOLS,
+    _EMAIL_MCP_OWNER_ARG,
     email_tool_policy_names,
     is_public_blocked_tool,
     owner_is_admin_or_single_user,
@@ -553,6 +554,39 @@ async def _document_tool_dispatch(
     return None
 
 
+def _parse_email_tool_args(bare_tool: str, content: str) -> Tuple[Dict, Optional[str]]:
+    """Parse a fenced/qualified email tool call body into args.
+
+    Shared by the bare-name (```list_emails```) and qualified
+    (mcp__email__list_emails) dispatch paths so both reject the same shapes
+    the same way — every email tool takes a JSON object, and silently
+    defaulting to {} on bad input would read the DEFAULT mailbox/folder
+    instead of the one the model meant (#3966 class). Only an EMPTY body
+    keeps the no-arg path (e.g. ```list_email_accounts```).
+
+    Returns (args, error_message); args is {} when error_message is set.
+    """
+    raw = content.strip()
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as je:
+        # Covers both `{account: "work"}` (looks like JSON, bad)
+        # and `account: work` (not JSON at all).
+        return {}, (
+            f"'{bare_tool}' arguments are not valid JSON ({je}). "
+            'Send a JSON object, e.g. {"account": "work"} — '
+            "keys and string values need double quotes."
+        )
+    if not isinstance(parsed, dict):
+        return {}, (
+            f"'{bare_tool}' arguments must be a JSON object, "
+            'e.g. {"uid": "..."} — got a JSON array/value instead.'
+        )
+    return parsed, None
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -939,34 +973,7 @@ async def _execute_tool_block_impl(
         qualified = f"mcp__email__{tool}"
         desc = f"email: {tool}"
         if mcp:
-            _raw = content.strip()
-            args = {}
-            _args_error = None
-            if _raw:
-                # A non-empty body is always meant to be the call's arguments,
-                # and every email tool takes a JSON object. Anything that
-                # isn't one is a correctable error — NOT a silent empty-args
-                # call, which would read the DEFAULT mailbox/folder instead of
-                # the one the model meant (#3966 class). Only an EMPTY body
-                # keeps the no-arg path (e.g. ```list_email_accounts```).
-                try:
-                    parsed = json.loads(_raw)
-                except (json.JSONDecodeError, TypeError) as _je:
-                    # Covers both `{account: "work"}` (looks like JSON, bad)
-                    # and `account: work` (not JSON at all).
-                    _args_error = (
-                        f"'{tool}' arguments are not valid JSON ({_je}). "
-                        'Send a JSON object, e.g. {"account": "work"} — '
-                        "keys and string values need double quotes."
-                    )
-                else:
-                    if isinstance(parsed, dict):
-                        args = parsed
-                    else:
-                        _args_error = (
-                            f"'{tool}' arguments must be a JSON object, "
-                            'e.g. {"uid": "..."} — got a JSON array/value instead.'
-                        )
+            args, _args_error = _parse_email_tool_args(tool, content)
             if _args_error is not None:
                 result = {"error": _args_error, "exit_code": 1}
             else:
@@ -974,6 +981,24 @@ async def _execute_tool_block_impl(
                     args = dict(args)
                     args[_EMAIL_MCP_OWNER_ARG] = owner
                 result = await mcp.call_tool(qualified, args)
+        else:
+            result = {"error": "MCP manager not available", "exit_code": 1}
+    elif tool.startswith("mcp__email__") and tool[len("mcp__email__"):] in BUILTIN_EMAIL_TOOLS:
+        # Qualified email tool name (e.g. from a native function-calling model,
+        # or an explicit mcp__email__* fence) — same validation + owner scoping
+        # as the bare-name branch above so both paths can't drift apart.
+        bare = tool[len("mcp__email__"):]
+        mcp = get_mcp_manager()
+        desc = f"mcp: {tool}"
+        if mcp:
+            args, _args_error = _parse_email_tool_args(bare, content)
+            if _args_error is not None:
+                result = {"error": _args_error, "exit_code": 1}
+            else:
+                if owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
+                result = await mcp.call_tool(tool, args)
         else:
             result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
