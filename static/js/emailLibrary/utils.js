@@ -227,3 +227,23 @@ export function _sanitizeHtml(html) {
   }
   return out;
 }
+
+// A single `str.replace(re, '')` pass over a "<tag ... >...</tag>" pattern
+// is incomplete: a crafted "<scrip<script>x</script>t>" splices into a new
+// "<script>...</script>" once the inner match is excised (CodeQL
+// js/incomplete-multi-character-sanitization — this is CodeQL's own
+// documented exploit shape for this rule, not a hypothetical). Re-running
+// the same regex against its own output until it stops changing removes
+// any tag reconstructed this way. Bounded like `_sanitizeHtml` above rather
+// than an unbounded do/while — a stripping regex converges in one or two
+// passes for any real input, so the bound just caps worst-case adversarial
+// input cheaply instead of looping forever.
+export function _stripUntilStable(str, re) {
+  let out = str;
+  for (let i = 0; i < 4; i++) {
+    const next = out.replace(re, '');
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
