@@ -592,7 +592,11 @@ export function mdToHtml(src, opts) {
     // Handle before $$/$ so all common delimiters render.
     s = s.replace(/\\\[([\s\S]*?)\\\]/g, (match, math) => {
       try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        // Unescape &amp; last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;", produced
+        // by the blanket `&` -> `&amp;` escape above) into a real "<" one
+        // pass early (CodeQL js/double-escaping).
+        const raw = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
         mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: true, throwOnError: false }));
         return placeholder;
@@ -602,7 +606,11 @@ export function mdToHtml(src, opts) {
     // ([^\n]) so a stray escaped paren in prose can't swallow across lines.
     s = s.replace(/\\\(([^\n]*?)\\\)/g, (match, math) => {
       try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        // Unescape &amp; last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;", produced
+        // by the blanket `&` -> `&amp;` escape above) into a real "<" one
+        // pass early (CodeQL js/double-escaping).
+        const raw = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
         mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: false, throwOnError: false }));
         return placeholder;
@@ -611,7 +619,11 @@ export function mdToHtml(src, opts) {
     // Display math: $$...$$
     s = s.replace(/\$\$([\s\S]*?)\$\$/g, (match, math) => {
       try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        // Unescape &amp; last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;", produced
+        // by the blanket `&` -> `&amp;` escape above) into a real "<" one
+        // pass early (CodeQL js/double-escaping).
+        const raw = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
         mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: true, throwOnError: false }));
         return placeholder;
@@ -620,7 +632,11 @@ export function mdToHtml(src, opts) {
     // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
     s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
       try {
-        const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        // Unescape &amp; last, not first — decoding it first would turn an
+        // already-escaped literal "&lt;" (i.e. the text "&amp;lt;", produced
+        // by the blanket `&` -> `&amp;` escape above) into a real "<" one
+        // pass early (CodeQL js/double-escaping).
+        const raw = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
         mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: false, throwOnError: false }));
         return placeholder;
@@ -797,7 +813,8 @@ const markdownModule = {
   extractThinkingBlocks,
   normalizeThinkingMarkup,
   startsWithReasoningPrefix,
-  renderMermaid
+  renderMermaid,
+  sanitizeAllowedHtml
 };
 
 export default markdownModule;

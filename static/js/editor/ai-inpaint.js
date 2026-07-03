@@ -266,7 +266,15 @@ export function wireInpaintButtons({
   document.getElementById('ge-inpaint-remove').addEventListener('click', async () => {
     const sel = getSelectedAIEndpoint('inpaint');
     const ep = (sel.endpoint || '').toLowerCase();
-    const isOpenAI = ep.includes('api.openai.com');
+    // Parse the host rather than substring-matching the whole URL — a plain
+    // `.includes('api.openai.com')` would also match an unrelated host with
+    // that text embedded in its path/query (CodeQL
+    // js/incomplete-url-substring-sanitization).
+    let isOpenAI = false;
+    try {
+      const h = new URL(ep).hostname;
+      isOpenAI = h === 'api.openai.com' || h.endsWith('.api.openai.com');
+    } catch (e) {}
     let prompt, strength;
     if (isOpenAI) {
       const userP = document.getElementById('ge-inpaint-prompt')?.value?.trim();

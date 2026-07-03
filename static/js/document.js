@@ -2354,9 +2354,15 @@ import * as Modals from './modalManager.js';
     const t = (text || '').trim();
     if (!t) return '';
     // If it already contains a formatting/structural HTML tag, it's a saved
-    // WYSIWYG body — use it verbatim. (Checking a leading '<' isn't enough: a
-    // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
-    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return t;
+    // WYSIWYG body — reuse it, but still run it through the same allowed-tag
+    // sanitizer markdown.js uses for AI-authored HTML (strips event handlers,
+    // javascript:/data: URLs, etc.) since this can be attacker-controlled
+    // email content, not just something the user typed themselves.
+    // (Checking a leading '<' isn't enough: a rich body often starts with
+    // plain text, e.g. "Hi <b>there</b>".)
+    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) {
+      return markdownModule.sanitizeAllowedHtml(t);
+    }
     // Email body: keep author-typed `:shortcode:` text literal. Issue #345
     // (shortcode → emoji) is scoped to chat; do not rewrite colons in mail.
     try { return markdownModule.mdToHtml(text, { shortcodes: false }); }

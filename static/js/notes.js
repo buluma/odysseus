@@ -444,7 +444,7 @@ async function _patchNote(id, patch) {
 
 // ---- Helpers ----
 
-function _esc(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function _esc(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function _attrEsc(s) {
   return String(s || '')
     .replace(/"/g, '&quot;')
@@ -2892,8 +2892,8 @@ function _buildForm(note = null) {
       <button type="button" class="note-form-icon-btn note-form-remind-btn${note?.due_date ? ' has-date' : ''}" title="Remind me">
         <svg width="31" height="31" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       </button>
-      <input type="hidden" class="note-form-due" value="${note?.due_date || ''}" />
-      <input type="hidden" class="note-form-repeat" value="${note?.repeat || 'none'}" />
+      <input type="hidden" class="note-form-due" value="${_esc(note?.due_date || '')}" />
+      <input type="hidden" class="note-form-repeat" value="${_esc(note?.repeat || 'none')}" />
     </div>
     ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button></div>` : ''}
     <div class="note-form-body">

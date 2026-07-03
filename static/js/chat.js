@@ -1931,7 +1931,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                           }
                           continue;
                         }
-                        const _card = _aw.querySelector('.attach-card[data-name="' + (_att.name || '').replace(/"/g, '\\"') + '"]');
+                        const _card = _aw.querySelector('.attach-card[data-name="' + (_att.name || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
                         const _iw = document.createElement('div');
                         _iw.className = 'attach-image-preview';
                         _iw.dataset.fileId = _att.id;
@@ -1956,7 +1956,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                         }
                         if (_card) _card.replaceWith(_iw); else _aw.appendChild(_iw);
                       } else {
-                        const _card = _aw.querySelector('.attach-card[data-name="' + (_att.name || '').replace(/"/g, '\\"') + '"]');
+                        const _card = _aw.querySelector('.attach-card[data-name="' + (_att.name || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
                         if (_card && _att.id) {
                           _card.dataset.fileId = _att.id;
                           _card.style.cursor = 'pointer';

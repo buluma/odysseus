@@ -2723,18 +2723,18 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
 
     <div class="cal-form-details" id="cal-form-details" aria-hidden="${_expandedAtStart ? 'false' : 'true'}">
       <div class="cal-form-row">
-        <input type="date" id="cal-f-date" value="${ds}" class="cal-input" />
+        <input type="date" id="cal-f-date" value="${_e(ds)}" class="cal-input" />
         <span style="opacity:0.3">to</span>
-        <input type="date" id="cal-f-date-end" value="${de}" class="cal-input" />
+        <input type="date" id="cal-f-date-end" value="${_e(de)}" class="cal-input" />
         <div class="cal-allday-ctrl">
           <span class="cal-allday-label">All day</span>
           <label class="admin-switch cal-allday-switch"><input type="checkbox" id="cal-f-allday" ${ad ? 'checked' : ''} /><span class="admin-slider"></span></label>
         </div>
       </div>
       <div class="cal-form-row" id="cal-time-row" style="${ad ? 'display:none' : ''}">
-        <input type="time" id="cal-f-start" value="${st}" class="cal-input cal-input-time" />
+        <input type="time" id="cal-f-start" value="${_e(st)}" class="cal-input cal-input-time" />
         <span style="opacity:0.3">–</span>
-        <input type="time" id="cal-f-end" value="${et}" class="cal-input cal-input-time" />
+        <input type="time" id="cal-f-end" value="${_e(et)}" class="cal-input cal-input-time" />
       </div>
       <div class="cal-loc-row">
         <input type="text" id="cal-f-loc" placeholder="Location" value="${_e(existing?.location || '')}" class="cal-input" />
@@ -3184,7 +3184,7 @@ function _clockFace(hhmm) {
   let hh = parseInt(h, 10);
   if (use12) { hh = ((hh + 11) % 12) + 1; }
   const hhStr = String(hh).padStart(2, '0');
-  return `<span class="cal-hero-clock-hh" data-seg="hh">${hhStr}</span><span class="cal-hero-sep"> : </span><span class="cal-hero-clock-mm" data-seg="mm">${m}</span>`;
+  return `<span class="cal-hero-clock-hh" data-seg="hh">${hhStr}</span><span class="cal-hero-sep"> : </span><span class="cal-hero-clock-mm" data-seg="mm">${_e(m)}</span>`;
 }
 function _clockAmpm(hhmm) {
   if (!hhmm) return '';

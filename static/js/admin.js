@@ -873,14 +873,23 @@ function initEndpointForm() {
     u = u.replace(/\/v1\/v1$/, '/v1');
     // Strip query params and fragments
     u = u.split('?')[0].split('#')[0];
+    // Match named cloud providers by parsed hostname, not by substring —
+    // `.includes('ollama.com')` would also match an unrelated host with that
+    // text embedded in its path/query (CodeQL
+    // js/incomplete-url-substring-sanitization).
+    const _hostIs = (hostname, domain) => hostname === domain || hostname.endsWith('.' + domain);
+    let isOllamaCloud = false, isOpenRouter = false, isOpencodeAi = false;
     try {
       const parsed = new URL(u);
-      if (parsed.hostname.endsWith('ollama.com')) {
+      isOllamaCloud = _hostIs(parsed.hostname, 'ollama.com');
+      isOpenRouter = _hostIs(parsed.hostname, 'openrouter.ai');
+      isOpencodeAi = _hostIs(parsed.hostname, 'opencode.ai');
+      if (isOllamaCloud) {
         u = 'https://ollama.com/api';
       }
     } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('opencode.ai') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !isOpenRouter && !isOpencodeAi && !isOllamaCloud && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {

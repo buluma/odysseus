@@ -82,7 +82,7 @@ async function _deleteTask(id) {
 }
 
 function _taskCardById(id) {
-  const safe = (window.CSS && CSS.escape) ? CSS.escape(String(id)) : String(id).replace(/"/g, '\\"');
+  const safe = (window.CSS && CSS.escape) ? CSS.escape(String(id)) : String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return document.querySelector(`.task-card[data-id="${safe}"]`);
 }
 
