@@ -705,7 +705,7 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     # Temporarily replace safe $(printf %s ...) expressions with a placeholder
     # to avoid triggering the metacharacter/command-injection checks.
     cleaned_v = v
-    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
+    printf_matches = list(re.finditer(r"\$\(\s*+printf\s++%s\s++([^\n()]*?)\)", v))
     for match in printf_matches:
         inner = match.group(1)
         if not any(c in inner for c in (";", "&&", "||", "$(", "`")):

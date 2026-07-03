@@ -168,7 +168,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
         # Strip closed think blocks. If a <think> was opened but never closed
         # (the model ran out of budget mid-reasoning), drop everything from it
         # onward so its stray braces don't poison JSON extraction.
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I)
+        text = _re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', text, flags=_re.I)
         text = _re.sub(r'<think(?:ing)?>[\s\S]*$', '', text, flags=_re.I).strip()
 
         def _coerce(d):
@@ -178,7 +178,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
         # Scan every balanced {...} candidate and keep the LAST one that parses
         # and carries a "verdict" — the transcript is full of JSON API bodies,
         # so a naive first-brace/last-brace span almost never parses.
-        for m in _re.finditer(r'\{[\s\S]*?\}', text):
+        for m in _re.finditer(r'\{[^{}]*?\}', text):
             frag = m.group(0)
             for cand in (frag, _re.sub(r',(\s*[}\]])', r'\1', frag)):
                 try:
@@ -296,7 +296,7 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
     except Exception as e:
         logger.warning(f"Necessity check failed: {e}")
         return None
-    text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
+    text = _re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
     text = _re.sub(r'<think(?:ing)?>[\s\S]*$', '', text, flags=_re.I).strip()
     data = None
     a, b = text.find('{'), text.rfind('}')
@@ -384,7 +384,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
     except Exception as e:
         logger.warning(f"Retrieval precision check failed: {e}")
         return None
-    text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
+    text = _re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
     text = _re.sub(r'<think(?:ing)?>[\s\S]*$', '', text, flags=_re.I).strip()
     data = None
     a, b = text.find('{'), text.rfind('}')
@@ -757,7 +757,7 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
     except Exception as e:
         logger.warning(f"Audit: improve call failed: {e}")
         return None
-    text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
+    text = _re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', (raw or ''), flags=_re.I)
     text = _re.sub(r'<think(?:ing)?>[\s\S]*$', '', text, flags=_re.I)
     text = _re.sub(r'</think(?:ing)?>', '', text, flags=_re.I).strip()
     if text.startswith("```"):

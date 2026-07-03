@@ -1188,7 +1188,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             text = raw.strip()
             # Reasoning models emit <think>…</think> (often containing { } that
             # would derail the brace scan) before the answer — drop it first.
-            text = re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=re.I).strip()
+            text = re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', text, flags=re.I).strip()
 
             def _loads_lenient(s):
                 """Parse JSON, retrying once with trailing commas stripped."""

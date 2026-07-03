@@ -80,8 +80,8 @@ def slugify(text: str, fallback: str = "skill") -> str:
 # and block lists with `-`. That covers everything in our schema and avoids
 # a new dependency.
 
-_FM_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*):\s*(.*)$", re.IGNORECASE)
-_FM_BLOCK_LIST_RE = re.compile(r"^\s*-\s*(.*)$")
+_FM_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*):\s*+(.*)$", re.IGNORECASE)
+_FM_BLOCK_LIST_RE = re.compile(r"^\s*+-\s*+(.*)$")
 
 
 def _parse_scalar(raw: str) -> Any:
@@ -249,7 +249,7 @@ def parse_body(body: str) -> Dict[str, Any]:
 
     sections: List[tuple[Optional[str], List[str]]] = [(None, [])]
     for line in body.splitlines():
-        m = re.match(r"^##\s+(.*?)\s*$", line)
+        m = re.match(r"^##\s++(.*?)\s*+$", line)
         if m:
             heading = m.group(1).strip().lower()
             key = _HEADING_TO_KEY.get(heading)
@@ -279,7 +279,7 @@ def _parse_list_lines(text: str) -> List[str]:
         s = line.strip()
         if not s:
             continue
-        m = re.match(r"^(?:[-*]|\d+[.)])\s+(.*)$", s)
+        m = re.match(r"^(?:[-*]|\d+[.)])\s++(.*)$", s)
         if m:
             items.append(m.group(1).strip())
         elif items:

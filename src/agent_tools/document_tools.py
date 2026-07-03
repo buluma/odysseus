@@ -116,7 +116,7 @@ def _sniff_doc_language(text: str) -> str:
         return "javascript"
     if _re2.search(r"(?mi)^\s*(select .* from |create table |insert into |update \w)", s):
         return "sql"
-    if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}]*:[^{}]*;", s):
+    if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}:]*:[^{}]*;", s):
         return "css"
     return "markdown"
 

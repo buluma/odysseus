@@ -615,7 +615,7 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     mapped = _TOOL_NAME_MAP.get(tool_name)
 
     # Extract args content
-    args_match = re.search(r"args\s*=>\s*['\"]?\s*([\s\S]*?)\s*['\"]?\s*$", raw, re.DOTALL)
+    args_match = re.search(r"args\s*+=>\s*+['\"]?\s*+([\s\S]*?)\s*+['\"]?\s*+$", raw, re.DOTALL)
     args_body = args_match.group(1).strip().strip("'\"") if args_match else ""
 
     # Parse XML params inside args (e.g. <command>ls</command>). Forward-only
@@ -683,7 +683,7 @@ def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
         except Exception:
             # Simple regex key-value extraction fallback
             params = {}
-            for m in re.finditer(r'(\w+)\s*:\s*["\']?(.*?)["\']?(?=\s*,\s*\w+\s*:|\s*\})', body):
+            for m in re.finditer(r'(\w+)\s*+:\s*+["\']?(.*?)["\']?(?=\s*+,\s*+\w+\s*+:|\s*+\})', body):
                 k = m.group(1)
                 v = m.group(2).strip()
                 params[k] = v
@@ -979,6 +979,6 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
     # Strip bare <invoke> blocks not wrapped in <tool_call>
-    cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r'<invoke\s++name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()

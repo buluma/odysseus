@@ -261,7 +261,7 @@ def setup_hwfit_routes():
             s = (s or "").lower().strip()
             s = s.split("/")[-1]                     # drop org prefix
             s = re.sub(r"[-_.]?gguf$", "", s)        # drop trailing gguf marker
-            s = re.sub(r"[-_.](q\d[^/]*|iq\d[^/]*|fp8|bf16|f16|awq[^/]*|gptq[^/]*)$", "", s)
+            s = re.sub(r"[-_.](q\d[^/]*+|iq\d[^/]*+|fp8|bf16|f16|awq[^/]*+|gptq[^/]*+)$", "", s)
             return s
 
         m = catalog.get(model)
