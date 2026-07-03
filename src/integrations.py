@@ -511,7 +511,7 @@ async def execute_api_call(
         return {"error": f"Request failed: {exc}", "exit_code": 1}
     except Exception as exc:
         log.exception("Unexpected error in execute_api_call")
-        return {"error": f"Unexpected error: {exc}", "exit_code": 1}
+        return {"error": "Unexpected error", "exit_code": 1}
 
 
 # ---------------------------------------------------------------------------

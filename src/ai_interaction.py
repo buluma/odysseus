@@ -1796,7 +1796,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     except httpx.TimeoutException:
         return {"error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."}
     except Exception as e:
-        return {"error": f"Image generation error: {str(e)}"}
+        logger.error(f"Image generation error: {e}")
+        return {"error": "Image generation failed"}
 
 
 # ---------------------------------------------------------------------------

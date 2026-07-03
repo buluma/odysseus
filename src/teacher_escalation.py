@@ -731,6 +731,6 @@ async def run_teacher_inline(
         yield (
             'data: ' + json.dumps({
                 "type": "skill_save_failed",
-                "reason": str(e),
+                "reason": "Failed to save skill",
             }) + '\n\n'
         )

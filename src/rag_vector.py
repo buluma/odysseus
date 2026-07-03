@@ -455,7 +455,7 @@ class VectorRAG:
             }
         except Exception as e:
             logger.error(f"index_personal_documents {directory}: {e}")
-            return {'success': False, 'indexed_count': indexed, 'failed_count': failed, 'message': str(e)}
+            return {'success': False, 'indexed_count': indexed, 'failed_count': failed, 'message': 'Indexing failed'}
 
     def remove_directory(self, directory: str) -> Dict[str, Any]:
         """Remove all chunks under ``directory`` (recursively), and nothing else.

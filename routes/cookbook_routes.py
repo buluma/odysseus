@@ -849,7 +849,7 @@ def setup_cookbook_routes() -> APIRouter:
                 _launch_local_detached(session_id, lines)
             except Exception as e:
                 logger.error(f"Local detached download launch failed: {e}")
-                return {"ok": False, "error": str(e), "session_id": session_id}
+                return {"ok": False, "error": "Failed to launch download", "session_id": session_id}
         else:
             proc = await asyncio.create_subprocess_shell(
                 setup_cmd,
@@ -1734,7 +1734,7 @@ def setup_cookbook_routes() -> APIRouter:
                 _launch_local_detached(session_id, runner_lines)
             except Exception as e:
                 logger.error(f"Local detached serve launch failed: {e}")
-                return {"ok": False, "error": str(e), "session_id": session_id}
+                return {"ok": False, "error": "Failed to launch serve process", "session_id": session_id}
         else:
             proc = await asyncio.create_subprocess_shell(
                 setup_cmd,
@@ -2244,7 +2244,8 @@ def setup_cookbook_routes() -> APIRouter:
         except asyncio.TimeoutError:
             return {"ok": False, "error": "kill command timed out"}
         except Exception as e:
-            return {"ok": False, "error": str(e)[:200]}
+            logger.error(f"kill pid failed: {e}")
+            return {"ok": False, "error": "Failed to kill process"}
 
     # ── Cookbook state persistence (cross-device sync) ──
 
@@ -2355,7 +2356,8 @@ def setup_cookbook_routes() -> APIRouter:
             atomic_write_json(str(_cookbook_state_path), _state_for_storage(data, on_disk), indent=2)
             return {"ok": True, "preserved": len(preserved)}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            logger.error(f"cookbook state save failed: {e}")
+            return {"ok": False, "error": "Failed to save state"}
 
     @router.get("/api/cookbook/hf-latest")
     async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):
@@ -2381,7 +2383,8 @@ def setup_cookbook_routes() -> APIRouter:
                     return {"models": [], "error": f"HF API HTTP {resp.status_code}"}
                 raw = resp.json()
         except Exception as e:
-            return {"models": [], "error": str(e)}
+            logger.error(f"HF API fetch failed: {e}")
+            return {"models": [], "error": "Failed to fetch model info"}
 
         # Estimate VRAM from the model id. Looks for patterns like "7B", "70B", "1.5B" etc.
         # Returns approx VRAM in GB at fp16 (params*2). Caller adjusts for quant.
@@ -2750,7 +2753,8 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     err = f"HTTP {resp.status_code}"
             except Exception as e:
-                err = str(e)[:160]
+                logger.error(f"Ollama library fetch failed: {e}")
+                err = "Failed to fetch model library"
             # Merge curated fallback so classics (qwen2.5, llama3, deepseek-r1,
             # …) stay reachable even when ollama.com's front page is dominated
             # by brand-new releases the user might not be looking for.

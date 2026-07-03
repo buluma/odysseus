@@ -656,4 +656,4 @@ async def audit_memories(
 
     except Exception as e:
         logger.error(f"Memory audit failed: {e}")
-        return {"error": str(e)}
+        return {"error": "Memory audit failed"}

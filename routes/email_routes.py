@@ -1653,7 +1653,8 @@ def setup_email_routes():
                 try:
                     d = _Docx(str(filepath))
                 except Exception as e:
-                    return {"error": f"Failed to read docx: {e}", "filename": base}
+                    logger.error(f"Failed to read docx {filepath}: {e}")
+                    return {"error": "Failed to read docx", "filename": base}
                 # Convert paragraphs to markdown — preserve heading styles as #/##/###,
                 # bullet lists as `- `, numbered lists as `1.`, and keep tables as
                 # simple pipe-delimited rows.
@@ -1707,7 +1708,8 @@ def setup_email_routes():
                 try:
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
-                    return {"error": f"Failed to read text file: {e}", "filename": base}
+                    logger.error(f"Failed to read text file {filepath}: {e}")
+                    return {"error": "Failed to read text file", "filename": base}
                 from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
@@ -2208,7 +2210,8 @@ def setup_email_routes():
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
         except Exception as e:
-            return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
+            logger.error(f"Failed to resolve send config: {e}")
+            return {"success": False, "error": "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
         has_attachments = bool(req.attachments)
@@ -2861,7 +2864,8 @@ def setup_email_routes():
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
                 _attempted = ", ".join(f"{m}@{u.split('/')[2] if '/' in u else u}" for u, m, _ in _candidates) or "no candidates"
-                return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings → Services."}
+                logger.error(f"AI reply: all endpoints failed ({_attempted}): {detail}")
+                return {"success": False, "error": f"All endpoints failed ({_attempted}). Check your API keys in Settings → Services."}
 
             reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
             if not reply:

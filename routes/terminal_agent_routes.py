@@ -77,7 +77,8 @@ def setup_terminal_agent_routes() -> APIRouter:
         except FileNotFoundError:
             return {"sessions": [], "error": "tmux not installed"}
         except Exception as e:
-            return {"sessions": [], "error": str(e)}
+            logger.error(f"Failed to list tmux sessions: {e}")
+            return {"sessions": [], "error": "Failed to list sessions"}
 
     return router
 
