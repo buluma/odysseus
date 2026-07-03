@@ -558,7 +558,7 @@ async def audit_memories(
         # markdown fences, leading prose, and trailing commas.
         import re as _re
         text = (raw or "").strip()
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I).strip()
+        text = _re.sub(r'<think(?:ing)?>(?:(?!</?think(?:ing)?>)[\s\S])*?</think(?:ing)?>', '', text, flags=_re.I).strip()
 
         def _loads_list(s):
             if not s:

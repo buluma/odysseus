@@ -429,15 +429,15 @@ def _md_to_email_html(text: str) -> str:
         s = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", s)
         s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
         # links: text + http(s) url only (escape() already neutralised quotes)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
+        s = re.sub(r"\[([^\]]++)\]\((https?://[^)\s]++)\)", r'<a href="\2">\1</a>', s)
         return s
 
     parts: list[str] = []
     in_ul = in_ol = False
     for ln in (text or "").split("\n"):
-        m_h = re.match(r"^(#{1,3})\s+(.*)$", ln)
-        m_ul = re.match(r"^\s*[-*]\s+(.*)$", ln)
-        m_ol = re.match(r"^\s*\d+\.\s+(.*)$", ln)
+        m_h = re.match(r"^(#{1,3})\s++(.*)$", ln)
+        m_ul = re.match(r"^\s*+[-*]\s++(.*)$", ln)
+        m_ol = re.match(r"^\s*+\d+\.\s++(.*)$", ln)
         if m_h:
             if in_ul: parts.append("</ul>"); in_ul = False
             if in_ol: parts.append("</ol>"); in_ol = False
