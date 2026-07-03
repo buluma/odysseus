@@ -1517,7 +1517,7 @@ def setup_chat_routes(
                         yield chunk
             except Exception as e:
                 logger.error("Rewrite stream error: %s", e)
-                yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 500})}\n\n'
+                yield f'event: error\ndata: {json.dumps({"error": "Unexpected error", "status": 500})}\n\n'
 
         return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
 
