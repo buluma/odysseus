@@ -155,11 +155,14 @@ _TOOL_CODE_RE = re.compile(
 _TOOL_CODE_OPEN_RE = re.compile(r"<tool_code>\s*\{", re.IGNORECASE)
 _TOOL_CODE_CLOSE_RE = re.compile(r"\}\s*</tool_code>", re.IGNORECASE)
 
-# Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
-_GEMMA_TOOL_CALL_RE = re.compile(
-    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*(\{[\s\S]*?\})\s*<\|?tool_call\|?>",
-    re.IGNORECASE,
-)
+# Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <|tool_call|>
+# Forward-only delimiters (see _iter_delimited). The lazy
+# `<\|tool_call\|>...(\{[\s\S]*?\})...<\|tool_call\|>` form rescanned to
+# end-of-string from every opener when the closing brace/tag was absent, so an
+# opener flood in untrusted model output was O(n^2) (CodeQL py/polynomial-redos).
+# Opener carries the `call:<name>{`; closer is the next `<|tool_call|>` token.
+_GEMMA_OPEN_RE = re.compile(r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*", re.IGNORECASE)
+_GEMMA_CLOSE_RE = re.compile(r"<\|?tool_call\|?>", re.IGNORECASE)
 
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
@@ -924,12 +927,13 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
-    # Pattern 4b: Gemma-style <|tool_call|> blocks
+    # Pattern 4b: Gemma-style <|tool_call|> blocks (forward-only; see _GEMMA_*_RE)
     if not blocks:
-        for m in _GEMMA_TOOL_CALL_RE.finditer(text):
-            tool_name = m.group(1)
-            body = m.group(2)
-            block = _parse_gemma_tool_call(tool_name, body)
+        for om_start, inner_start, inner_end, _cm_end in _iter_delimited(text, _GEMMA_OPEN_RE, _GEMMA_CLOSE_RE):
+            name_m = _GEMMA_OPEN_RE.match(text, om_start)
+            if name_m is None:
+                continue
+            block = _parse_gemma_tool_call(name_m.group(1), text[inner_start:inner_end])
             if block:
                 blocks.append(block)
 
@@ -968,7 +972,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _strip_delimited(cleaned, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE)
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
-    cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _strip_delimited(cleaned, _GEMMA_OPEN_RE, _GEMMA_CLOSE_RE)
     if not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(cleaned)
         if raw_web_json:
