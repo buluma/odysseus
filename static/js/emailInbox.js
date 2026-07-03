@@ -800,6 +800,16 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       // inner match is excised. Re-running the regex to a fixed point
       // catches the reconstructed tag (CodeQL js/incomplete-multi-character-
       // sanitization — this is CodeQL's own documented exploit shape).
+      //
+      // (A DOM-based removal via utils.js's _sanitizeHtml was tried instead
+      // of this regex loop, since CodeQL keeps flagging this construct on
+      // its static shape regardless of the loop — but _sanitizeHtml returns
+      // doc.body.innerHTML, which re-escapes any "<"/">" that survives as
+      // inert text back into "&lt;"/"&gt;", and this function only unescapes
+      // entities once, before sanitizing. That reintroduces exactly the kind
+      // of leftover-escaped-fragment leakage this fix is trying to close —
+      // verified worse, not better, so kept the loop and dismissed the
+      // alert instead; see the alert's dismissal comment for the reasoning.)
       _plain = _stripUntilStable(_plain, /<style[\s\S]*?(?:<\/style[^>]*>|$)/gi);
       _plain = _stripUntilStable(_plain, /<script[\s\S]*?(?:<\/script[^>]*>|$)/gi);
       _origBody = _plain
