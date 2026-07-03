@@ -196,7 +196,7 @@ def _google_caldav_events_url(url: str) -> str | None:
     if not path.endswith("/user"):
         return None
     is_google = (
-        host.endswith("googleusercontent.com")                       # newer /caldav/v2 form
+        (host == "googleusercontent.com" or host.endswith(".googleusercontent.com"))  # newer /caldav/v2 form
         or (host in ("www.google.com", "google.com") and "/calendar/dav/" in path)  # legacy form
     )
     if not is_google:
