@@ -422,18 +422,6 @@ function _calItemBgStyle(ev) {
   return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${_cssUrlEscape(url)}'); background-size: cover; background-position: center;`;
 }
 
-function _todayCount() {
-  const t = _today();
-  return _events.filter(e => {
-    if (!_eventVisible(e)) return false;
-    if (e.all_day) {
-      if (e.dtstart === e.dtend) return e.dtstart === t;
-      return e.dtstart <= t && e.dtend > t;
-    }
-    return _localDateOf(e.dtstart) === t;
-  }).length;
-}
-
 function _findEventByUid(uid) {
   return _allEvents[uid] || _events.find(e => e && e.uid === uid) || null;
 }
@@ -636,31 +624,39 @@ function _restoreSidebar() {
 }
 
 // ── Badge ──
+//
+// Dot lights up when any visible upcoming (not-yet-ended) event's uid isn't
+// in the last-seen set, so it re-triggers for newly added/synced events even
+// on a day where the user already opened the calendar — unlike a plain
+// "seen today" flag, which would stay cleared until midnight.
 
-const BADGE_SEEN_KEY = 'odysseus-calendar-badge-seen';
+const BADGE_SEEN_KEY = 'odysseus-calendar-seen-uids';
 
-function _todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function _upcomingEvents() {
+  const now = Date.now();
+  return Object.values(_allEvents).filter(e => {
+    if (!e || !_eventVisible(e)) return false;
+    const endMs = new Date(e.dtend || e.dtstart).getTime();
+    return !isNaN(endMs) && endMs >= now;
+  });
 }
 
-function _isBadgeSeenToday() {
-  try { return localStorage.getItem(BADGE_SEEN_KEY) === _todayStr(); } catch { return false; }
+function _getSeenUids() {
+  try { return new Set(JSON.parse(localStorage.getItem(BADGE_SEEN_KEY) || '[]')); }
+  catch { return new Set(); }
 }
 
 function _markBadgeSeen() {
-  try { localStorage.setItem(BADGE_SEEN_KEY, _todayStr()); } catch {}
+  try { localStorage.setItem(BADGE_SEEN_KEY, JSON.stringify(_upcomingEvents().map(e => e.uid))); }
+  catch {}
 }
 
 function _updateBadge() {
-  const btn = document.getElementById('tool-calendar-btn');
-  if (!btn) return;
-  let badge = btn.querySelector('.cal-badge');
-  const count = _todayCount();
-  if (count > 0 && !_isBadgeSeenToday()) {
-    if (!badge) { badge = document.createElement('span'); badge.className = 'cal-badge'; btn.appendChild(badge); }
-    badge.title = `${count} event${count > 1 ? 's' : ''} today`;
-  } else if (badge) badge.remove();
+  const dot = document.getElementById('calendar-notif-dot');
+  if (!dot) return;
+  const seen = _getSeenUids();
+  const hasUnseen = _upcomingEvents().some(e => !seen.has(e.uid));
+  dot.style.display = hasUnseen ? '' : 'none';
 }
 
 // ── Modal ──
@@ -3495,7 +3491,7 @@ function openCalendar() {
     return;
   }
   _open = true;
-  if (_todayCount() > 0) { _markBadgeSeen(); _updateBadge(); }
+  _markBadgeSeen(); _updateBadge();
   _collapseSidebar();
   const modal = _getModal();
   // Clean up any leftover state from a previous swipe-dismiss

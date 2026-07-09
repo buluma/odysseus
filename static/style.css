@@ -37999,7 +37999,6 @@ button.cal-view-btn {
 .cal-year-has { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .cal-year-has.cal-year-today { background:color-mix(in srgb, var(--accent, var(--red)) 25%, transparent); }
 .cal-loading { display:flex; justify-content:center; padding:40px 0; }
-.cal-badge { background:var(--accent); border-radius:50%; width:6px; height:6px; margin-left:auto; display:inline-block; flex-shrink:0; }
 /* Search input — in-panel variant lives inside the day-detail panel and
    spans its width; no width animation since growing/shrinking on every
    keystroke would jitter beside the events list. */
