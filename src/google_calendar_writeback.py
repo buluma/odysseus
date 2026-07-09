@@ -159,6 +159,12 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
             body = build_google_event_body(ev)
             if remote_id:
                 resp = await client.put(f"{events_url}/{remote_id}", headers=headers, json=body)
+                if resp.status_code in (404, 410):
+                    # Remote event vanished (deleted independently on
+                    # Google's side) — drop the stale remote_id and create a
+                    # fresh one instead of retrying the same PUT forever.
+                    remote_id = ""
+                    resp = await client.post(events_url, headers=headers, json=body)
             else:
                 resp = await client.post(events_url, headers=headers, json=body)
             resp.raise_for_status()
