@@ -385,7 +385,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     monkeypatch.setattr(chat_helpers, "extract_preset", fake_extract_preset)
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
     monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user: {})
-    monkeypatch.setattr(chat_helpers, "get_current_user", lambda request: "tester")
+    monkeypatch.setattr(chat_helpers, "effective_user", lambda request: "tester")
     monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
     monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
@@ -514,6 +514,33 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
 
         assert result["exit_code"] == 1
         assert error_text in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_app_api_blocks_search_route_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block search routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    result = await do_app_api(
+        json.dumps(
+            {
+                "action": "call",
+                "method": "GET",
+                "path": "/api/search",
+                "query": {"q": "crow box designs"},
+            }
+        ),
+        owner="admin",
+    )
+
+    assert result["exit_code"] == 1
+    assert "use the `web_search` tool" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -1096,9 +1123,14 @@ def test_single_user_mode_keeps_full_tool_access_when_auth_disabled(monkeypatch)
     assert blocked_tools_for_owner(None) == set()
 
 
-def test_single_user_mode_keeps_full_tool_access_when_auth_disabled_but_configured(monkeypatch):
-    """If AUTH_ENABLED=false, we are in single-user mode and should have full tool
-    access, even if AuthManager has an admin configured (is_configured=True)."""
+def test_auth_disabled_configured_mode_keeps_full_tool_access(monkeypatch):
+    """AUTH_ENABLED=false is still intentional single-user mode after setup.
+
+    Once an admin account exists, AuthManager.is_configured becomes true. The
+    tool gate must still honor explicit auth-disabled mode before requiring an
+    owner/admin match, otherwise agent mode hides email/MCP/local tools from the
+    operator.
+    """
     monkeypatch.setenv("AUTH_ENABLED", "false")
     auth_mod = _install_core_auth_stub(monkeypatch)
 
@@ -1117,7 +1149,6 @@ def test_single_user_mode_keeps_full_tool_access_when_auth_disabled_but_configur
 
     assert owner_is_admin_or_single_user(None) is True
     assert blocked_tools_for_owner(None) == set()
-
 
 
 @pytest.mark.asyncio
@@ -1155,7 +1186,7 @@ async def test_webhook_tool_reuses_private_url_validation():
     monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
     monkeypatch.setitem(sys.modules, "src.database", fake_src_db)
 
-    from src.tool_implementations import do_manage_webhooks
+    from src.agent_tools.admin_tools import do_manage_webhooks
 
     try:
         result = await do_manage_webhooks(

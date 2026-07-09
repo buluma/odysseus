@@ -23,7 +23,15 @@ from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, MkdirTool, RmTool, MvTool, CpTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+from .interaction_tools import AskUserTool, UpdatePlanTool
+from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
+from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .admin_tools import (
+    ADMIN_TOOL_HANDLERS,
+    do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
+    do_manage_tokens, do_manage_settings,
+)
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -46,8 +54,19 @@ TOOL_HANDLERS = {
     "mv": MvTool().execute,
     "cp": CpTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "ask_user": AskUserTool().execute,
+    "update_plan": UpdatePlanTool().execute,
+    "chat_with_model": ChatWithModelTool().execute,
+    "ask_teacher": AskTeacherTool().execute,
+    "list_models": ListModelsTool().execute,
     "manage_bg_jobs": ManageBgJobsTool().execute,
+    "create_session": CreateSessionTool().execute,
+    "list_sessions": ListSessionsTool().execute,
+    "send_to_session": SendToSessionTool().execute,
+    "manage_session": ManageSessionTool().execute,
 }
+# Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
+TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
@@ -139,10 +158,5 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,
-    do_manage_endpoints,
-    do_manage_mcp,
-    do_manage_webhooks,
-    do_manage_tokens,
-    do_manage_settings,
     do_api_call,
 )

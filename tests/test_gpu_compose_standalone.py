@@ -140,7 +140,6 @@ def test_nvidia_odysseus_adds_only_overlay(base):
     # No Docker or AMD groups are added.
     assert "devices" not in svc
     assert "group_add" not in base_svc
-
     assert "group_add" not in svc
 
 
@@ -153,12 +152,9 @@ def test_amd_odysseus_adds_only_overlay(base):
     assert svc["environment"] == base_svc["environment"]
 
     # Devices and GPU-only groups are added.
-
     assert "devices" not in base_svc
-    assert "group_add" not in base_svc
     assert svc["devices"] == ["/dev/kfd", "/dev/dri"]
     assert "group_add" not in base_svc
-
     assert svc["group_add"] == ["video", "${RENDER_GID:-render}"]
 
     # No NVIDIA-only keys leaked in.
