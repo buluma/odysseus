@@ -531,6 +531,7 @@ def _load_delete_for_writeback(owner: str, uid: str) -> tuple[str, str, dict] | 
         tombstone = db.query(CalendarDeletedEvent).filter(
             CalendarDeletedEvent.uid == uid,
             CalendarDeletedEvent.owner == owner,
+            (CalendarDeletedEvent.source == "caldav") | (CalendarDeletedEvent.source.is_(None)),
         ).first()
         if tombstone:
             return "caldav", tombstone.calendar_id, {"uid": uid}
@@ -569,7 +570,10 @@ def _pending_writeback_uids(owner: str) -> tuple[list[str], list[str]]:
         )
         delete_rows = (
             db.query(CalendarDeletedEvent.uid)
-            .filter(CalendarDeletedEvent.owner == owner)
+            .filter(
+                CalendarDeletedEvent.owner == owner,
+                (CalendarDeletedEvent.source == "caldav") | (CalendarDeletedEvent.source.is_(None)),
+            )
             .all()
         )
         return [row[0] for row in rows], [row[0] for row in delete_rows]

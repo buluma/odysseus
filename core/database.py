@@ -1713,7 +1713,7 @@ class CalendarEvent(TimestampMixin, Base):
 
 
 class CalendarDeletedEvent(TimestampMixin, Base):
-    """Hidden CalDAV delete tombstone retained until remote delete succeeds."""
+    """Hidden delete tombstone retained until the remote (CalDAV or Google) delete succeeds."""
     __tablename__ = "caldav_deleted_events"
 
     uid = Column(String, primary_key=True, index=True)
@@ -1724,6 +1724,31 @@ class CalendarDeletedEvent(TimestampMixin, Base):
     caldav_base_url = Column(String, nullable=True)
     summary = Column(String, nullable=True)
     last_error = Column(Text, nullable=True)
+    # "caldav" or "google" — which write-back path should pick this tombstone
+    # up. NULL on legacy rows predating this column, treated as "caldav".
+    source = Column(String, nullable=True)
+
+
+class CalendarGoogleAccount(TimestampMixin, Base):
+    """A Google account connected for Calendar sync via OAuth2.
+
+    Mirrors EmailAccount's oauth columns (see its docstring for the
+    encryption threat model — same secret_storage.py, same "stolen SQLite
+    backup" scope). One row per connected Google account; each maps to a
+    single local CalendarCal with source="google".
+    """
+    __tablename__ = "calendar_google_accounts"
+
+    id                  = Column(String, primary_key=True, index=True)
+    owner               = Column(String, nullable=True, index=True)
+    label               = Column(String, nullable=False, default="Google Calendar")
+    google_email        = Column(String, nullable=True)
+    google_calendar_id  = Column(String, nullable=False, default="primary")
+    enabled             = Column(Boolean, default=True)
+
+    oauth_access_token  = Column(String, nullable=True)   # encrypted
+    oauth_refresh_token = Column(String, nullable=True)   # encrypted
+    oauth_token_expiry  = Column(String, nullable=True)   # unix timestamp string
 
 
 class Integration(TimestampMixin, Base):
@@ -1874,6 +1899,7 @@ def init_db():
     _migrate_add_calendar_origin()
     _migrate_add_calendar_account_id()
     _migrate_add_caldav_sync_columns()
+    _migrate_add_calendar_deleted_event_source()
     _migrate_add_calendar_recurrence_exdates()
     _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
@@ -2198,6 +2224,28 @@ def _migrate_add_caldav_sync_columns():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"CalDAV sync metadata migration failed: {e}")
+
+
+def _migrate_add_calendar_deleted_event_source():
+    """Add the source column to caldav_deleted_events (#google-calendar-oauth).
+
+    Tags each delete tombstone as "caldav" or "google" so each write-back
+    module only picks up its own deletes instead of both racing the same row.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(caldav_deleted_events)").fetchall()]
+        if columns and "source" not in columns:
+            conn.execute("ALTER TABLE caldav_deleted_events ADD COLUMN source TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'source' column to caldav_deleted_events")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"caldav_deleted_events.source migration failed: {e}")
 
 
 def _migrate_add_calendar_metadata():

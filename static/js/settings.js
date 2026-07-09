@@ -3491,6 +3491,7 @@ async function initIntegrations() {
 const INTG_TYPES = {
   api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  google_calendar: { label: 'Google Calendar', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="12" cy="15" r="3"/></svg>' },
   contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
@@ -3590,7 +3591,7 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
+    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes, googleCalRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
@@ -3600,6 +3601,7 @@ async function initUnifiedIntegrations() {
       fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/tokens', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('/api/calendar/calendars', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { calendars: [] }).catch(() => ({ calendars: [] })),
+      fetch('/api/calendar/google/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
     ]);
     const items = [];
     // API integrations
@@ -3609,6 +3611,13 @@ async function initUnifiedIntegrations() {
     // CalDAV — one card per account
     for (const acc of (calRes.accounts || [])) {
       items.push({ type: 'caldav', id: acc.id, name: acc.label || 'Calendar (CalDAV)', detail: acc.url, enabled: true, data: acc });
+    }
+    // Google Calendar — one card per connected account
+    for (const acc of (googleCalRes.accounts || [])) {
+      items.push({
+        type: 'google_calendar', id: acc.id, name: acc.label || 'Google Calendar',
+        detail: acc.google_email || '', enabled: acc.enabled !== false, data: acc,
+      });
     }
     // Contacts import first, then the optional CardDAV sync account.
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
@@ -3724,6 +3733,7 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'google_calendar') await fetch(`/api/calendar/google/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
             await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
@@ -3746,6 +3756,7 @@ async function initUnifiedIntegrations() {
     formEl.style.display = '';
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm(editId);
+    else if (type === 'google_calendar') showGoogleCalendarForm(editId);
     else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
@@ -4068,6 +4079,42 @@ async function initUnifiedIntegrations() {
       el('uf-caldav-msg').style.color = '';
       const d = await _runCalDavTest();
       _setCalDavMsg(d.ok ? 'Connected' : (d.error || 'Failed'), d.ok);
+    });
+  }
+
+  // ── Google Calendar form (OAuth2 — no credential fields, just connect) ──
+  async function showGoogleCalendarForm(editId) {
+    let existing = null;
+    if (editId && editId !== 'new') {
+      try {
+        const r = await fetch('/api/calendar/google/accounts', { credentials: 'same-origin' });
+        const d = await r.json();
+        existing = (d.accounts || []).find(a => a.id === editId) || null;
+      } catch (_) {}
+    }
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;">${INTG_TYPES.google_calendar.icon}Google Calendar</h2>
+        <div class="settings-col">
+          <div style="font-size:11px;line-height:1.5;opacity:0.75;margin-bottom:6px;">
+            Connects via Google OAuth2 and syncs your primary Google Calendar — events created,
+            edited, or deleted here push back to Google, and changes made in Google Calendar pull
+            in on sync.
+          </div>
+          <div id="uf-gcal-status" style="font-size:11px;opacity:0.8;">
+            ${existing ? `Connected as <strong>${esc(existing.google_email || existing.label || '')}</strong>` : 'Not connected'}
+          </div>
+          <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
+            <button class="admin-btn-add" id="uf-gcal-connect" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
+              ${existing ? 'Reconnect with Google' : 'Connect with Google'}
+            </button>
+            <button class="admin-btn-add" id="uf-gcal-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+    el('uf-gcal-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-gcal-connect').addEventListener('click', () => {
+      window.location.href = '/api/calendar/oauth/google/authorize';
     });
   }
 
@@ -5646,6 +5693,7 @@ async function initUnifiedIntegrations() {
     const _typeOptions = [
       ['api', 'API Service'],
       ['caldav', 'CalDAV Calendar'],
+      ['google_calendar', 'Google Calendar'],
       ['claude', 'Claude Agent'],
       ['codex', 'Codex Agent'],
       ['carddav', 'Contacts (CardDAV)'],
@@ -5759,15 +5807,19 @@ export function close() {
   }
 }
 
-// Handle redirect back from Google OAuth2 — open settings to integrations and show status.
+// Handle redirect back from Google OAuth2 (email or calendar) — open settings
+// to integrations and show status.
 (function _handleOauthRedirect() {
   const sp = new URLSearchParams(window.location.search);
-  if (!sp.has('email_oauth_success') && !sp.has('email_oauth_error')) return;
+  const isEmail = sp.has('email_oauth_success') || sp.has('email_oauth_error');
+  const isCalendar = sp.has('calendar_oauth_success') || sp.has('calendar_oauth_error');
+  if (!isEmail && !isCalendar) return;
   // Strip params from URL without a page reload.
   const clean = window.location.pathname + window.location.hash;
   window.history.replaceState(null, '', clean);
-  const success = sp.has('email_oauth_success');
-  const errMsg = sp.get('email_oauth_error') || '';
+  const success = sp.has('email_oauth_success') || sp.has('calendar_oauth_success');
+  const errMsg = sp.get('email_oauth_error') || sp.get('calendar_oauth_error') || '';
+  const feature = isCalendar ? 'calendar' : 'email';
   // Open settings → integrations after the app has initialised.
   function _tryOpen() {
     if (window.settingsModule && typeof window.settingsModule.open === 'function') {
@@ -5775,7 +5827,7 @@ export function close() {
       // Brief toast-style banner.
       const banner = document.createElement('div');
       banner.textContent = success
-        ? '✓ Google account connected — email is ready'
+        ? `✓ Google account connected — ${feature} is ready`
         : `Google OAuth failed: ${errMsg || 'unknown error'}`;
       Object.assign(banner.style, {
         position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
