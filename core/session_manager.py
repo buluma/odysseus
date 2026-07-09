@@ -9,6 +9,7 @@ This is the single place that handles:
 """
 
 import json
+import threading
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
@@ -72,7 +73,33 @@ class SessionManager:
     def __init__(self, sessions_file: str = None):
         # sessions_file kept for backward compat, not used
         self.sessions: Dict[str, Session] = {}
+        # FastAPI runs sync route handlers in a threadpool, so a still-streaming
+        # response's add_message() and a concurrent delete_session()/
+        # truncate_messages() call on the same session_id can genuinely
+        # interleave. Each mutator below takes this per-session lock for its
+        # whole read-modify-write, closing that race. Lock objects are never
+        # evicted from the dict — a bare threading.Lock is a couple hundred
+        # bytes, and evicting one while another thread might still be waiting
+        # on it (e.g. right after a delete) reintroduces the same race, so
+        # unbounded-but-tiny growth is the safer trade for a personal-scale app.
+        self._session_locks: Dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
         self.load_sessions()
+
+    def _lock_for(self, session_id: str) -> threading.Lock:
+        # Some tests replace __init__ wholesale to skip the DB load (see
+        # tests/test_session_manager.py's `sm` fixture and
+        # SessionManager.__new__() use in test_session_ghost_delete.py), so
+        # this can't assume __init__ ran. setdefault() on self.__dict__ is
+        # safe under the GIL for this narrow one-time-per-instance case.
+        guard = self.__dict__.setdefault("_locks_guard", threading.Lock())
+        with guard:
+            locks = self.__dict__.setdefault("_session_locks", {})
+            lock = locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                locks[session_id] = lock
+            return lock
 
     # ------------------------------------------------------------------
     # Loading
@@ -210,12 +237,13 @@ class SessionManager:
             session_id: Session ID
             message: ChatMessage to add
         """
-        session = self.get_session(session_id)
-        session.history.append(message)
-        session._history = session.history
-        session.message_count = len(session.history)
+        with self._lock_for(session_id):
+            session = self.get_session(session_id)
+            session.history.append(message)
+            session._history = session.history
+            session.message_count = len(session.history)
 
-        self._persist_message(session_id, message)
+            self._persist_message(session_id, message)
 
     def _persist_message(self, session_id: str, message: ChatMessage):
         """Persist a single message to the database."""
@@ -277,95 +305,97 @@ class SessionManager:
 
     def truncate_messages(self, session_id: str, keep_count: int) -> bool:
         """Truncate session history, keeping only the first `keep_count` messages."""
-        session = self.get_session(session_id)
-
         if keep_count < 0:
             return False
 
-        db = SessionLocal()
-        try:
-            db_messages = db.query(DbChatMessage).filter(
-                DbChatMessage.session_id == session_id
-            ).order_by(DbChatMessage.timestamp).all()
+        with self._lock_for(session_id):
+            session = self.get_session(session_id)
 
-            deleted = 0
-            for msg in db_messages[keep_count:]:
-                db.delete(msg)
-                deleted += 1
+            db = SessionLocal()
+            try:
+                db_messages = db.query(DbChatMessage).filter(
+                    DbChatMessage.session_id == session_id
+                ).order_by(DbChatMessage.timestamp).all()
 
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                # keep_count can exceed the real message total (e.g. the AI tool
-                # defaults to keep_count=10 on a short session); message_count must
-                # track the rows that actually remain, not the requested cap.
-                db_session.message_count = min(keep_count, len(db_messages))
-                db_session.updated_at = datetime.now(timezone.utc)
+                deleted = 0
+                for msg in db_messages[keep_count:]:
+                    db.delete(msg)
+                    deleted += 1
 
-            db.commit()
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    # keep_count can exceed the real message total (e.g. the AI tool
+                    # defaults to keep_count=10 on a short session); message_count must
+                    # track the rows that actually remain, not the requested cap.
+                    db_session.message_count = min(keep_count, len(db_messages))
+                    db_session.updated_at = datetime.now(timezone.utc)
 
-            # Update in-memory
-            session.history = session.history[:keep_count]
-            session._history = session.history
+                db.commit()
 
-            logger.info(f"Truncated session {session_id} to {keep_count} messages")
-            return True
+                # Update in-memory
+                session.history = session.history[:keep_count]
+                session._history = session.history
 
-        except Exception as e:
-            logger.error(f"Error truncating session: {e}")
-            db.rollback()
-            return False
-        finally:
-            db.close()
+                logger.info(f"Truncated session {session_id} to {keep_count} messages")
+                return True
+
+            except Exception as e:
+                logger.error(f"Error truncating session: {e}")
+                db.rollback()
+                return False
+            finally:
+                db.close()
 
     def replace_messages(self, session_id: str, messages: list) -> bool:
         """Replace a session's persisted and in-memory history atomically."""
-        session = self.get_session(session_id)
-        db = SessionLocal()
-        try:
-            db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
-            now = datetime.now(timezone.utc)
-            for i, message in enumerate(messages):
-                msg_id = str(uuid.uuid4())
-                db_message = DbChatMessage(
-                    id=msg_id,
-                    session_id=session_id,
-                    role=message.role,
-                    # Multimodal content (image/audio attachments) is a list;
-                    # serialize to JSON so the Text column round-trips via
-                    # _parse_msg_content. Storing the raw list let SQLAlchemy
-                    # bind its single-quoted repr, which _parse_msg_content
-                    # cannot parse (it looks for double-quoted "type"), so the
-                    # attachment was destroyed on reload. Mirrors _persist_message.
-                    content=(json.dumps(message.content)
-                             if isinstance(message.content, list)
-                             else message.content),
-                    meta_data=json.dumps(message.metadata) if message.metadata else None,
-                    timestamp=now + timedelta(microseconds=i),
-                )
-                db.add(db_message)
-                if message.metadata is None:
-                    message.metadata = {}
-                message.metadata["_db_id"] = msg_id
+        with self._lock_for(session_id):
+            session = self.get_session(session_id)
+            db = SessionLocal()
+            try:
+                db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
+                now = datetime.now(timezone.utc)
+                for i, message in enumerate(messages):
+                    msg_id = str(uuid.uuid4())
+                    db_message = DbChatMessage(
+                        id=msg_id,
+                        session_id=session_id,
+                        role=message.role,
+                        # Multimodal content (image/audio attachments) is a list;
+                        # serialize to JSON so the Text column round-trips via
+                        # _parse_msg_content. Storing the raw list let SQLAlchemy
+                        # bind its single-quoted repr, which _parse_msg_content
+                        # cannot parse (it looks for double-quoted "type"), so the
+                        # attachment was destroyed on reload. Mirrors _persist_message.
+                        content=(json.dumps(message.content)
+                                 if isinstance(message.content, list)
+                                 else message.content),
+                        meta_data=json.dumps(message.metadata) if message.metadata else None,
+                        timestamp=now + timedelta(microseconds=i),
+                    )
+                    db.add(db_message)
+                    if message.metadata is None:
+                        message.metadata = {}
+                    message.metadata["_db_id"] = msg_id
 
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.message_count = len(messages)
-                db_session.updated_at = now
-                db_session.last_accessed = now
-                db_session.last_message_at = now
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    db_session.message_count = len(messages)
+                    db_session.updated_at = now
+                    db_session.last_accessed = now
+                    db_session.last_message_at = now
 
-            db.commit()
-            session.history = list(messages)
-            session._history = session.history
-            session.message_count = len(messages)
-            logger.info("Replaced session %s history with %d messages", session_id, len(messages))
-            return True
-        except Exception as e:
-            logger.error("Error replacing session history: %s", e)
-            db.rollback()
-            return False
-        finally:
-            db.close()
+                db.commit()
+                session.history = list(messages)
+                session._history = session.history
+                session.message_count = len(messages)
+                logger.info("Replaced session %s history with %d messages", session_id, len(messages))
+                return True
+            except Exception as e:
+                logger.error("Error replacing session history: %s", e)
+                db.rollback()
+                return False
+            finally:
+                db.close()
 
     # ------------------------------------------------------------------
     # Session CRUD
@@ -515,41 +545,42 @@ class SessionManager:
 
     def delete_session(self, session_id: str) -> bool:
         """Permanently delete a session and all its messages."""
-        db = SessionLocal()
-        try:
-            # Detach documents so they survive as orphans in the library
-            db.query(DbDocument).filter(DbDocument.session_id == session_id).update(
-                {DbDocument.session_id: None}, synchronize_session=False
-            )
+        with self._lock_for(session_id):
+            db = SessionLocal()
+            try:
+                # Detach documents so they survive as orphans in the library
+                db.query(DbDocument).filter(DbDocument.session_id == session_id).update(
+                    {DbDocument.session_id: None}, synchronize_session=False
+                )
 
-            # Delete messages
-            db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
+                # Delete messages
+                db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
 
-            # Delete session
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db.delete(db_session)
+                # Delete session
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    db.delete(db_session)
 
-            # Drop the in-memory copy even when there is no DB row. A "ghost"
-            # session lives only here (never persisted, or its row was removed
-            # out-of-band); without this it can never be cleared and keeps
-            # 404ing on every operation (issue #1044).
-            removed_in_memory = self.sessions.pop(session_id, None) is not None
+                # Drop the in-memory copy even when there is no DB row. A "ghost"
+                # session lives only here (never persisted, or its row was removed
+                # out-of-band); without this it can never be cleared and keeps
+                # 404ing on every operation (issue #1044).
+                removed_in_memory = self.sessions.pop(session_id, None) is not None
 
-            if db_session or removed_in_memory:
-                # Commit the document-detach / message-delete above (a no-op when
-                # the ghost had no rows) together with the session delete.
-                db.commit()
-                logger.info(f"Deleted session {session_id}")
-                return True
-            return False
+                if db_session or removed_in_memory:
+                    # Commit the document-detach / message-delete above (a no-op when
+                    # the ghost had no rows) together with the session delete.
+                    db.commit()
+                    logger.info(f"Deleted session {session_id}")
+                    return True
+                return False
 
-        except Exception as e:
-            logger.error(f"Error deleting session: {e}")
-            db.rollback()
-            return False
-        finally:
-            db.close()
+            except Exception as e:
+                logger.error(f"Error deleting session: {e}")
+                db.rollback()
+                return False
+            finally:
+                db.close()
 
     # ------------------------------------------------------------------
     # Session updates
