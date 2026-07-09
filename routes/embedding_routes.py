@@ -296,8 +296,9 @@ def setup_embedding_routes():
         os.environ["EMBEDDING_URL"] = url
         if model:
             os.environ["EMBEDDING_MODEL"] = model
-        if api_key:
-            os.environ["EMBEDDING_API_KEY"] = api_key
+        # The key itself stays out of env — get_embedding_client() re-reads
+        # and decrypts it from the file just persisted above on next use, so
+        # there's no need to also hold the plaintext in the process env.
 
         # Reset the RAG singleton so it picks up the new endpoint
         import src.rag_singleton as _rs

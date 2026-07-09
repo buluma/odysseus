@@ -244,22 +244,28 @@ def get_embedding_client():
 
     # Check for a persisted custom endpoint (saved from admin panel)
     persisted = _load_persisted_endpoint()
+    decrypted_api_key = None
     if persisted.get("url"):
         url = persisted["url"]
         model = persisted.get("model", "")
         api_key = persisted.get("api_key", "")
-        # Also set in env so other code sees it
+        # URL/model aren't secret — also set in env so other code (e.g. the
+        # /endpoint status route) sees them. The API key stays out of env and
+        # is passed straight to EmbeddingClient below: decrypting it into a
+        # process-wide env var would leave the plaintext secret readable via
+        # /proc/self/environ (or any subprocess we spawn) for the process's
+        # whole lifetime.
         os.environ["EMBEDDING_URL"] = url
         if model:
             os.environ["EMBEDDING_MODEL"] = model
         if api_key:
             from src.secret_storage import decrypt
-            os.environ["EMBEDDING_API_KEY"] = decrypt(api_key)
+            decrypted_api_key = decrypt(api_key)
     # Try the HTTP embedding API — unless we already found it down this process
     # (avoids paying the connect timeout again on every RAG/memory/tool probe).
     if not _http_embed_down:
         try:
-            client = EmbeddingClient()
+            client = EmbeddingClient(api_key=decrypted_api_key) if decrypted_api_key else EmbeddingClient()
             client.get_sentence_embedding_dimension()  # health check
             logger.info(f"Using HTTP embedding API: {client.url} model={client.model}")
             return client
