@@ -960,6 +960,14 @@ def setup_calendar_routes() -> APIRouter:
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
         if not client_id:
             raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
+        # Host header reflects whatever host:port the browser actually used
+        # to reach us (custom APP_PORT included), so it's correct for the
+        # common case without any config. The literal 7000 fallback only
+        # fires if a request somehow arrives with no Host header at all (the
+        # same rationale as src/mcp_oauth.py's REDIRECT_URI: it mirrors the
+        # container's own internal listen port, not the Docker host
+        # port-map). Deployments behind a reverse proxy or public domain
+        # should set GOOGLE_CALENDAR_OAUTH_REDIRECT_URI explicitly.
         redirect_uri = (
             os.environ.get("GOOGLE_CALENDAR_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/calendar/oauth/google/callback"
@@ -992,6 +1000,14 @@ def setup_calendar_routes() -> APIRouter:
         owner = state_data.get("o", "")
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
         client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        # Host header reflects whatever host:port the browser actually used
+        # to reach us (custom APP_PORT included), so it's correct for the
+        # common case without any config. The literal 7000 fallback only
+        # fires if a request somehow arrives with no Host header at all (the
+        # same rationale as src/mcp_oauth.py's REDIRECT_URI: it mirrors the
+        # container's own internal listen port, not the Docker host
+        # port-map). Deployments behind a reverse proxy or public domain
+        # should set GOOGLE_CALENDAR_OAUTH_REDIRECT_URI explicitly.
         redirect_uri = (
             os.environ.get("GOOGLE_CALENDAR_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/calendar/oauth/google/callback"
