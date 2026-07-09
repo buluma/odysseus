@@ -26,7 +26,7 @@ def test_settings_ui_uses_registered_supervisor_key():
 
 
 def test_manage_settings_accepts_supervisor_aliases():
-    body = Path("src/tool_implementations.py").read_text(encoding="utf-8")
+    body = Path("src/agent_tools/admin_tools.py").read_text(encoding="utf-8")
 
     assert '"supervisor ladder": "agent_supervisor_ladder"' in body
     assert '"agent verifier": "agent_supervisor_ladder"' in body

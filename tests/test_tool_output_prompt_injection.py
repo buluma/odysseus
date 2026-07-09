@@ -66,7 +66,7 @@ def test_non_native_tool_results_are_wrapped_untrusted():
     )
     assert msg["role"] == "user"
     assert "Source: tool execution results" in msg["content"]
-    assert "UNTRUSTED SOURCE DATA" in msg["content"]
+    assert "SECURITY - UNTRUSTED DATA" in msg["content"]
 
 
 def test_wrapped_tool_envelope_excluded_from_retrieval_query():
