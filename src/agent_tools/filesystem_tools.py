@@ -382,7 +382,14 @@ class GlobTool:
         if err:
             return {"error": err, "exit_code": 1}
         if not paths:
-            return {"output": f"No files matching {pattern!r} under {root}", "exit_code": 0}
+            # Don't echo a pattern that escapes the search root (../, absolute
+            # path) verbatim — tool output must never surface paths outside
+            # the workspace, even ones the caller itself supplied, so nothing
+            # downstream of this response (transcripts, logs) can leak them.
+            norm_pat = pattern.replace("\\", "/")
+            escapes = os.path.isabs(norm_pat) or ".." in norm_pat.split("/")
+            shown = "<pattern outside workspace>" if escapes else pattern
+            return {"output": f"No files matching {shown!r} under {root}", "exit_code": 0}
         out = "\n".join(paths)
         if len(paths) >= _CODENAV_MAX_HITS:
             out += f"\n... [capped at {_CODENAV_MAX_HITS} files]"
