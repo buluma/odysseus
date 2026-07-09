@@ -173,6 +173,83 @@ def test_writeback_event_skips_when_account_not_configured():
     assert result.get("skipped")
 
 
+class _FakeGoogleResp:
+    def __init__(self, status_code: int, payload: dict | None = None):
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+class _FakeGoogleAsyncClient:
+    """Stands in for httpx.AsyncClient in src.google_calendar_writeback.
+
+    put() returns a canned 404 (simulating a remote-deleted event); post()
+    returns a canned success with a fresh id/etag.
+    """
+    put_urls: list = []
+    post_urls: list = []
+
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def put(self, url, **kw):
+        _FakeGoogleAsyncClient.put_urls.append(url)
+        return _FakeGoogleResp(404)
+
+    async def post(self, url, **kw):
+        _FakeGoogleAsyncClient.post_urls.append(url)
+        return _FakeGoogleResp(200, {"id": "new-remote-id", "etag": '"e2"'})
+
+
+def test_writeback_event_recreates_on_404_instead_of_retry_loop(monkeypatch):
+    """A PUT against a remote_href that Google deleted independently must not
+    raise and retry the same PUT forever — it should fall back to creating a
+    fresh remote event, matching the semantics an out-of-band delete implies."""
+    from src.google_calendar_writeback import writeback_event
+    import asyncio
+    import httpx
+
+    db = _TS()
+    db.add(CalendarGoogleAccount(id="acc-recreate", owner="owner-recreate", google_calendar_id="primary"))
+    db.add(CalendarCal(
+        id="cal-recreate", owner="owner-recreate", name="Google Calendar",
+        source="google", account_id="acc-recreate",
+    ))
+    db.commit()
+    db.close()
+
+    monkeypatch.setattr(
+        "src.google_calendar_sync._get_valid_google_calendar_token",
+        lambda account_id: "fake-token",
+    )
+    _FakeGoogleAsyncClient.put_urls = []
+    _FakeGoogleAsyncClient.post_urls = []
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeGoogleAsyncClient)
+
+    result = asyncio.run(writeback_event(
+        "owner-recreate", "google", "cal-recreate", _ev(remote_href="stale-remote-id"),
+    ))
+
+    assert len(_FakeGoogleAsyncClient.put_urls) == 1
+    assert _FakeGoogleAsyncClient.put_urls[0].endswith("/events/stale-remote-id")
+    assert len(_FakeGoogleAsyncClient.post_urls) == 1
+    assert result["ok"] is True
+    assert result["remote_href"] == "new-remote-id"
+    assert result["remote_etag"] == "e2"
+
+
 # ── Account CRUD ─────────────────────────────────────────────────────────
 
 def test_list_google_accounts_scoped_to_owner():

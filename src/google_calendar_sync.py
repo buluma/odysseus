@@ -220,8 +220,10 @@ def _sync_account_blocking(owner: str, account_id: str, access_token: str,
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
-    time_min = (datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)).isoformat() + "Z"
-    time_max = (datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)).isoformat() + "Z"
+    window_start = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
+    window_end = datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)
+    time_min = window_start.isoformat() + "Z"
+    time_max = window_end.isoformat() + "Z"
 
     items = []
     page_token = None
@@ -297,9 +299,16 @@ def _sync_account_blocking(owner: str, account_id: str, access_token: str,
             result["events"] += 1
         db.commit()
 
+        # Only prune within the fetched [window_start, window_end] range — an
+        # event outside it is absent from `items` (and thus `seen_uids`)
+        # simply because it wasn't fetched, not because it was deleted on
+        # Google's side. Without this bound, any event further than 90 days
+        # in the past or 365 days out gets deleted locally on every sync.
         stale = db.query(CalendarEvent).filter(
             CalendarEvent.calendar_id == local_cal.id,
             CalendarEvent.origin == "google",
+            CalendarEvent.dtstart >= window_start,
+            CalendarEvent.dtstart <= window_end,
             CalendarEvent.remote_href.isnot(None),
             CalendarEvent.caldav_sync_pending.is_(None),
             ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
