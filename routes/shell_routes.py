@@ -270,13 +270,17 @@ def _package_pip_update_status(
     )
 
 
-def _prepend_user_install_bins_to_path() -> None:
-    """Make pip --user console scripts visible to dependency probes.
+def _user_install_bins_path() -> str:
+    """Return PATH with pip --user console-script dirs prepended, for the
+    dependency probes below — without mutating the process-wide os.environ.
 
     Docker Cookbook installs vLLM with `python -m pip install --user`, which
     drops the `vllm` CLI in /app/.local/bin. The running app process does not
-    inherit that PATH update, so `shutil.which("vllm")` can report missing even
-    after a successful install.
+    inherit that PATH update, so a plain `shutil.which("vllm")` can report
+    missing even after a successful install; passing this string as
+    `shutil.which(name, path=...)` fixes that for just this request instead
+    of changing PATH for every other concurrent request/thread for the rest
+    of the process's life.
     """
     try:
         import site
@@ -289,13 +293,10 @@ def _prepend_user_install_bins_to_path() -> None:
     parts = (
         os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
     )
-    changed = False
     for path in reversed([p for p in candidates if p]):
         if path not in parts:
             parts.insert(0, path)
-            changed = True
-    if changed:
-        os.environ["PATH"] = os.pathsep.join(parts)
+    return os.pathsep.join(parts)
 
 
 def _package_probe_script(names: list[str]) -> str:
@@ -1104,7 +1105,7 @@ def setup_shell_routes() -> APIRouter:
         import site
         import sys
 
-        _prepend_user_install_bins_to_path()
+        _which_path = _user_install_bins_path()
         importlib.invalidate_caches()
         try:
             user_site = site.getusersitepackages()
@@ -1408,18 +1409,18 @@ def setup_shell_routes() -> APIRouter:
                         else "Requires a native Apple Silicon Mac with Apple Foundational Models support."
                     )
                 else:
-                    pkg["installed"] = shutil.which(pkg["name"]) is not None
-            elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
+                    pkg["installed"] = shutil.which(pkg["name"], path=_which_path) is not None
+            elif pkg["name"] == "llama_cpp" and shutil.which("llama-server", path=_which_path):
                 pkg["installed"] = True
                 pkg["status_note"] = (
-                    f"native llama-server: {shutil.which('llama-server')}"
+                    f"native llama-server: {shutil.which('llama-server', path=_which_path)}"
                 )
                 probe = {
-                    "binaries": {"llama-server": shutil.which("llama-server")},
+                    "binaries": {"llama-server": shutil.which("llama-server", path=_which_path)},
                     "dists": {},
                 }
             elif pkg["name"] == "vllm":
-                _vllm_cli = shutil.which("vllm")
+                _vllm_cli = shutil.which("vllm", path=_which_path)
                 pkg["installed"] = _vllm_cli is not None
                 if pkg["installed"]:
                     try:
@@ -1508,7 +1509,7 @@ def setup_shell_routes() -> APIRouter:
                         _gpu_capable = bool(_lcp.llama_supports_gpu_offload())
                     except Exception:
                         _gpu_capable = False
-                    _has_nvidia_target = shutil.which("nvidia-smi") is not None
+                    _has_nvidia_target = shutil.which("nvidia-smi", path=_which_path) is not None
                 if (not _gpu_capable) and _has_nvidia_target:
                     pkg["partial"] = True
                     pkg["partial_reason"] = "Installed but CPU-only wheel — GPU detected on this target. Upgrade to a CUDA wheel for ~10× faster inference."
@@ -1524,7 +1525,7 @@ def setup_shell_routes() -> APIRouter:
                 if on_remote:
                     _pr_present = {n: bool(remote_status.get(n)) for n in _prereqs}
                 else:
-                    _pr_present = {n: shutil.which(n) is not None for n in _prereqs}
+                    _pr_present = {n: shutil.which(n, path=_which_path) is not None for n in _prereqs}
                 pkg["system_prereqs_status"] = _pr_present
                 _missing = [n for n, ok in _pr_present.items() if not ok]
                 # Suppress the "missing build deps" hint when the package

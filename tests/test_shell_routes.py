@@ -22,7 +22,7 @@ from routes.shell_routes import (
     _package_pip_update_status,
     _package_probe_script,
     _package_status_note,
-    _prepend_user_install_bins_to_path,
+    _user_install_bins_path,
     _reject_cross_site,
     _ssh_base_argv,
     _venv_activate_prefix,
@@ -420,11 +420,15 @@ class TestPackageProbeStatus:
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
         monkeypatch.setenv("PATH", "/usr/bin")
 
-        _prepend_user_install_bins_to_path()
+        merged = _user_install_bins_path()
 
-        parts = os.environ["PATH"].split(os.pathsep)
+        # Returns the merged PATH for shutil.which(path=...) rather than
+        # mutating os.environ — the real PATH must be untouched.
+        assert os.environ["PATH"] == "/usr/bin"
+        parts = merged.split(os.pathsep)
         assert str(user_base / "bin") in parts
         assert str(tmp_path / "home" / ".local" / "bin") in parts
+        assert "/usr/bin" in parts
 
     def test_remote_package_probe_checks_user_install_bin(self):
         script = _package_probe_script(["vllm"])
