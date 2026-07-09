@@ -3725,3 +3725,22 @@ window.addEventListener('focus', () => {
 const calendarModule = { openCalendar, closeCalendar, isCalendarOpen };
 export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen };
 export default calendarModule;
+
+// ── Test-only exports ──
+// Thin wrappers around otherwise-private module state/functions so the
+// sidebar notif-dot logic (badge seen-set, upcoming-event filtering) is
+// covered by a real test instead of only manual verification. Mirrors
+// tileManager.js's _zoneForPointerForTests()-style pattern.
+export function _setEventsForTests(events) {
+  _allEvents = {};
+  (events || []).forEach(e => { if (e && e.uid) _allEvents[e.uid] = e; });
+}
+export function _upcomingEventsForTests() {
+  return _upcomingEvents();
+}
+export function _markBadgeSeenForTests() {
+  _markBadgeSeen();
+}
+export function _updateBadgeForTests() {
+  _updateBadge();
+}
