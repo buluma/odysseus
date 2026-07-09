@@ -2734,13 +2734,22 @@ async function _showCalSettings() {
     btn.disabled = true;
     status.textContent = 'Syncing…';
     const data = await _syncCaldav(true) || {};
-    if (data.errors && data.errors.length) {
+    const parts = [];
+    if (data.events) parts.push(`${data.events} events`);
+    if (data.deleted) parts.push(`${data.deleted} removed`);
+    const hasErrors = data.errors && data.errors.length;
+    if (hasErrors && !parts.length) {
+      // Nothing synced at all — a plain failure.
       status.textContent = `Sync failed: ${data.errors[0]}`;
+    } else if (hasErrors) {
+      // Some sources synced fine, at least one didn't — say both so a
+      // working Google Calendar sync doesn't read as a total failure
+      // just because e.g. CalDAV has a stale password.
+      status.textContent = `Synced — ${parts.join(', ')} (${data.errors[0]})`;
     } else {
-      const parts = [];
-      if (data.events) parts.push(`${data.events} events`);
-      if (data.deleted) parts.push(`${data.deleted} removed`);
       status.textContent = parts.length ? `Synced — ${parts.join(', ')}` : 'Synced — no changes';
+    }
+    if (!hasErrors || parts.length) {
       _allEvents = {}; _fetchedRanges = [];
       try { localStorage.removeItem(LS_KEY); } catch (_) {}
       await _fetchCalendars();

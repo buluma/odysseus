@@ -623,10 +623,12 @@ async def sync_caldav(owner: str) -> dict:
 
     accounts = _load_caldav_accounts(owner)
     if not accounts:
-        return {
-            "calendars": 0, "events": 0, "deleted": 0,
-            "errors": ["CalDAV is not configured"],
-        }
+        # Not configured is a no-op, not a failure — mirrors
+        # src/google_calendar_sync.py::sync_google_calendar's same check.
+        # Every calendar-open and periodic sync call runs this, so treating
+        # "CalDAV never set up" as an error made every sync for a
+        # Google-Calendar-only user read as "Sync failed".
+        return {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
     totals: dict = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
     for acc in accounts:
