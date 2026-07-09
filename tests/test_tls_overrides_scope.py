@@ -25,7 +25,6 @@ keeps the security-sensitive helper hard to misuse.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -118,11 +117,11 @@ def test_tls_overrides_does_not_weaken_global_tls():
         )
 
 
-def test_llm_verify_default_is_true_when_env_unset():
+def test_llm_verify_default_is_true_when_env_unset(monkeypatch):
     """When LLM_CA_BUNDLE is unset, llm_verify() must return True so httpx
     falls through to its built-in trust store. This is the safe default —
     operators have to opt in to get any change at all."""
-    os.environ.pop("LLM_CA_BUNDLE", None)
+    monkeypatch.delenv("LLM_CA_BUNDLE", raising=False)
     import importlib
 
     import src.tls_overrides as mod
@@ -134,16 +133,13 @@ def test_llm_verify_default_is_true_when_env_unset():
     )
 
 
-def test_llm_verify_falls_back_to_true_for_missing_bundle_file():
+def test_llm_verify_falls_back_to_true_for_missing_bundle_file(monkeypatch):
     """Pointing LLM_CA_BUNDLE at a non-existent path must NOT raise and
     must fall back to verify=True (system trust). A misconfigured env var
     on a deploy box should never produce a silently TLS-disabled process."""
-    os.environ["LLM_CA_BUNDLE"] = "/nonexistent/path/extra-roots.pem"
-    try:
-        import importlib
+    monkeypatch.setenv("LLM_CA_BUNDLE", "/nonexistent/path/extra-roots.pem")
+    import importlib
 
-        import src.tls_overrides as mod
-        importlib.reload(mod)
-        assert mod.llm_verify() is True
-    finally:
-        os.environ.pop("LLM_CA_BUNDLE", None)
+    import src.tls_overrides as mod
+    importlib.reload(mod)
+    assert mod.llm_verify() is True

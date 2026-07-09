@@ -9,30 +9,24 @@ inconsistent with the actual rows. get_session relies on message_count>0 to
 decide whether to lazily hydrate from the DB, so an inflated count is a latent
 correctness hazard.
 """
-import os
-import tempfile
+from tests.helpers.sqlite_db import make_temp_sqlite
 
 
-def _make_manager():
-    db_fd, db_path = tempfile.mkstemp(suffix=".db")
-    os.close(db_fd)
-    os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
-
-    # Import after DATABASE_URL is set so the engine binds to the temp DB.
-    import importlib
+def _make_manager(monkeypatch):
     import core.database as database
-    importlib.reload(database)
-    database.Base.metadata.create_all(bind=database.engine)
-
     import core.session_manager as sm_mod
-    importlib.reload(sm_mod)
+
+    TestingSessionLocal, engine, tmpfile = make_temp_sqlite(database.Base.metadata)
+    monkeypatch.setattr(database, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(sm_mod, "SessionLocal", TestingSessionLocal)
+
     return sm_mod.SessionManager(), database, sm_mod
 
 
-def test_truncate_keep_count_exceeds_total_does_not_inflate_count():
+def test_truncate_keep_count_exceeds_total_does_not_inflate_count(monkeypatch):
     from core.models import ChatMessage
 
-    sm, database, sm_mod = _make_manager()
+    sm, database, sm_mod = _make_manager(monkeypatch)
     sid = "short-session"
     sm.create_session(session_id=sid, name="t", endpoint_url="x",
                       model="m", rag=False, owner="u")
@@ -59,10 +53,10 @@ def test_truncate_keep_count_exceeds_total_does_not_inflate_count():
         db.close()
 
 
-def test_truncate_keeps_history_alias_for_context_messages():
+def test_truncate_keeps_history_alias_for_context_messages(monkeypatch):
     from core.models import ChatMessage
 
-    sm, database, sm_mod = _make_manager()
+    sm, database, sm_mod = _make_manager(monkeypatch)
     sid = "alias-after-truncate"
     sm.create_session(session_id=sid, name="t", endpoint_url="x",
                       model="m", rag=False, owner="u")
