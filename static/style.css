@@ -767,20 +767,15 @@ body.bg-pattern-sparkles {
       0%, 100% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 0 color-mix(in srgb, var(--red) 50%, transparent); }
       50% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 4px color-mix(in srgb, var(--red) 15%, transparent); }
     }
-    /* Main sidebar notes button — dot when a reminder has fired */
-    .tool-notes-dot {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
+    /* Main sidebar notes button — dot when a reminder has fired. Base size/
+       shape/position comes from the shared .sidebar-notif-dot (Email/Events/
+       Calendar); this overrides color to always-red (a fired reminder is
+       urgent, unlike the passive presence the shared dot usually signals)
+       plus the pulse and the same -4px nudge the old one-off class used. */
+    #notes-fired-dot.sidebar-notif-dot {
       background: var(--red);
-      /* Match the Deep Research badge: right-aligned (auto) with the same
-         4px left nudge, so both sidebar buttons' dots line up identically. */
-      margin-left: auto;
       position: relative;
       left: -4px;
-      flex-shrink: 0;
-      align-self: center;
       animation: rail-notes-pulse 1.6s ease-in-out infinite;
       pointer-events: none;
     }

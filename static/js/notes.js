@@ -1068,19 +1068,8 @@ function _updateRailBadge() {
     }
   }
   // Main sidebar button
-  const sidebarBtn = document.getElementById('tool-notes-btn');
-  if (sidebarBtn) {
-    let dot = sidebarBtn.querySelector('.tool-notes-dot');
-    if (fired > 0) {
-      if (!dot) {
-        dot = document.createElement('span');
-        dot.className = 'tool-notes-dot';
-        sidebarBtn.appendChild(dot);
-      }
-    } else if (dot) {
-      dot.remove();
-    }
-  }
+  const dot = document.getElementById('notes-fired-dot');
+  if (dot) dot.style.display = fired > 0 ? '' : 'none';
   // Individual note cards — pulse ones with fired reminders
   document.querySelectorAll('.note-card').forEach(card => {
     const id = card.dataset.noteId;
