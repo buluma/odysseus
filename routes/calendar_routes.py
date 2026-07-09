@@ -1297,11 +1297,11 @@ def setup_calendar_routes() -> APIRouter:
                 is_utc=_is_utc and not data.all_day,
                 rrule=data.rrule or "",
                 color=data.color or None,
-                caldav_sync_pending="create" if cal.source == "caldav" else None,
+                caldav_sync_pending="create" if cal.source in ("caldav", "google") else None,
             )
             db.add(ev)
             db.commit()
-            if cal.source == "caldav":
+            if cal.source in ("caldav", "google"):
                 await _push_caldav_event_after_commit(owner, uid, "create")
             return {"ok": True, "uid": uid}
         except HTTPException:
@@ -1348,11 +1348,11 @@ def setup_calendar_routes() -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
-            is_caldav = ev.calendar and ev.calendar.source == "caldav"
-            if is_caldav:
+            is_remote_synced = ev.calendar and ev.calendar.source in ("caldav", "google")
+            if is_remote_synced:
                 ev.caldav_sync_pending = "update"
             db.commit()
-            if is_caldav:
+            if is_remote_synced:
                 await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"ok": True}
         except HTTPException:
@@ -1375,7 +1375,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             ev = _get_or_404_event(db, base_uid, owner)
             is_occurrence_delete = scope in {"occurrence", "instance"} and "::" in uid and bool(ev.rrule)
-            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            is_remote_synced = ev.calendar and ev.calendar.source in ("caldav", "google")
             if is_occurrence_delete:
                 key = _occurrence_exdate_key(uid, ev)
                 if not key:
@@ -1384,17 +1384,17 @@ def setup_calendar_routes() -> APIRouter:
                 if key not in exdates:
                     exdates.append(key)
                 ev.recurrence_exdates = json.dumps(sorted(exdates))
-                if is_caldav:
+                if is_remote_synced:
                     ev.caldav_sync_pending = "update"
                 db.commit()
-                if is_caldav:
+                if is_remote_synced:
                     await _push_caldav_event_after_commit(owner, base_uid, "update")
                 return {"ok": True, "scope": "occurrence", "exdate": key}
-            if is_caldav:
+            if is_remote_synced:
                 _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
-            if is_caldav:
+            if is_remote_synced:
                 await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"ok": True}
         except HTTPException:
