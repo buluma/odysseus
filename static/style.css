@@ -770,14 +770,20 @@ body.bg-pattern-sparkles {
     /* Main sidebar notes button — dot when a reminder has fired. Base size/
        shape/position comes from the shared .sidebar-notif-dot (Email/Events/
        Calendar); this overrides color to always-red (a fired reminder is
-       urgent, unlike the passive presence the shared dot usually signals)
-       plus the pulse and the same -4px nudge the old one-off class used. */
+       urgent, unlike the passive presence the shared dot usually signals),
+       adds the pulse, and nudges 4px in from the right edge so the dot
+       doesn't crowd the sidebar corner. */
     #notes-fired-dot.sidebar-notif-dot {
       background: var(--red);
       position: relative;
       left: -4px;
       animation: rail-notes-pulse 1.6s ease-in-out infinite;
       pointer-events: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      /* Match the email dot's motion discipline: presence still shows
+         (static red dot), only the pulse is suppressed. */
+      #notes-fired-dot.sidebar-notif-dot { animation: none; }
     }
     /* Individual card — subtle accent border tint when a reminder has fired */
     .note-card.note-card-reminder-due .note-card-reminder {
