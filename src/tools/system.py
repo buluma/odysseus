@@ -274,7 +274,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     import uuid as _uuid
     from core.database import SessionLocal, ScheduledTask
     from src.task_scheduler import compute_next_run
-    from src.task_action_policy import is_admin_only_task_action, owner_has_admin_task_privileges
+    from src.task_action_policy import admin_violation_for_task_action, resolve_task_action_edit
 
     try:
         args = _parse_tool_args(content)
@@ -315,13 +315,14 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "action_name is required for action tasks", "exit_code": 1}
             # Defense in depth: manage_tasks is already in NON_ADMIN_BLOCKED_TOOLS
             # (src/tool_security.py), so a non-admin owner can't reach this
-            # function at all today. This mirrors routes/task_routes.py's own
-            # check anyway, so a future caller of do_manage_tasks that skips
-            # the tool-dispatch gate still can't hand a non-admin owner
-            # run_local/run_script/ssh_command/cookbook_serve (all shell/
-            # process execution — see src/task_action_policy.py).
-            if is_admin_only_task_action(task_type, args.get("action_name")) and not owner_has_admin_task_privileges(owner):
-                return {"error": f"Action '{args.get('action_name')}' requires admin privileges", "exit_code": 1}
+            # function at all today. The gate itself lives in
+            # src/task_action_policy.py, shared with routes/task_routes.py, so
+            # a future caller of do_manage_tasks that skips the tool-dispatch
+            # gate still can't hand a non-admin owner run_local/run_script/
+            # ssh_command/cookbook_serve (all shell/process execution).
+            violation = admin_violation_for_task_action(owner, task_type, args.get("action_name"))
+            if violation:
+                return {"error": violation, "exit_code": 1}
 
             # Compute next_run for schedule triggers
             next_run = None
@@ -369,16 +370,17 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if owner and task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
-            # Same defense-in-depth as the create branch above, computed
-            # against the task_type/action this edit would leave in place
-            # (mirrors routes/task_routes.py's update_task "next_*" check) —
-            # otherwise a non-admin-owned task could be edited into an
-            # admin-only action, or an admin-only task's prompt/action
-            # rewritten by whoever merely owns the row.
-            next_task_type = args.get("task_type") if args.get("task_type") is not None else task.task_type
-            next_action = args.get("action_name") if args.get("action_name") is not None else task.action
-            if is_admin_only_task_action(next_task_type, next_action) and not owner_has_admin_task_privileges(owner):
-                return {"error": f"Action '{next_action}' requires admin privileges", "exit_code": 1}
+            # Same defense-in-depth as the create branch above, judged against
+            # the task_type/action the edit would leave in effect (shared
+            # resolution with routes/task_routes.py's update_task) — otherwise
+            # a non-admin-owned task could be edited into an admin-only action,
+            # or an admin-only task's prompt/action rewritten by whoever
+            # merely owns the row.
+            next_task_type, next_action = resolve_task_action_edit(
+                args.get("task_type"), args.get("action_name"), task.task_type, task.action)
+            violation = admin_violation_for_task_action(owner, next_task_type, next_action)
+            if violation:
+                return {"error": violation, "exit_code": 1}
 
             changed = []
             for field in ("name", "prompt", "output_target"):

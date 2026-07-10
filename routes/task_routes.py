@@ -17,8 +17,9 @@ from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_action_policy import (
     ADMIN_ONLY_TASK_ACTIONS,
-    is_admin_only_task_action,
+    admin_violation_for_task_action,
     owner_has_admin_task_privileges,
+    resolve_task_action_edit,
 )
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
@@ -432,8 +433,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         return owner_has_admin_task_privileges(user)
 
     def _require_admin_for_task_action(user: str | None, task_type: str | None, action: str | None) -> None:
-        if is_admin_only_task_action(task_type, action) and not _is_admin(user):
-            raise HTTPException(403, f"Action '{action}' requires admin privileges")
+        violation = admin_violation_for_task_action(user, task_type, action)
+        if violation:
+            raise HTTPException(403, violation)
 
     def _validate_then_task_id(db, then_task_id: Optional[str], user: Optional[str], current_task_id: Optional[str] = None) -> Optional[str]:
         target_id = (then_task_id or "").strip()
@@ -675,8 +677,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
 
-            next_task_type = req.task_type if req.task_type is not None else task.task_type
-            next_action = req.action if req.action is not None else task.action
+            next_task_type, next_action = resolve_task_action_edit(
+                req.task_type, req.action, task.task_type, task.action)
             _require_admin_for_task_action(user, next_task_type, next_action)
 
             if req.name is not None:
@@ -1055,14 +1057,13 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             ).first()
             if not task:
                 raise HTTPException(404, "Not found")
-            if (
-                is_admin_only_task_action(task.task_type, task.action)
-                and not owner_has_admin_task_privileges(task.owner)
-            ):
+            violation = admin_violation_for_task_action(
+                task.owner, task.task_type, task.action)
+            if violation:
                 task.status = "paused"
                 task.next_run = None
                 db.commit()
-                raise HTTPException(403, f"Action '{task.action}' requires admin privileges")
+                raise HTTPException(403, violation)
         finally:
             db.close()
         started = await task_scheduler.run_task_now(task_id)

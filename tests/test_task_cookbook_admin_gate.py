@@ -7,68 +7,27 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
 
 from tests.helpers.import_state import clear_fake_database_modules
+from tests.helpers.task_gate import bind_real_task_db, install_fake_auth
 
 clear_fake_database_modules()
 
-import core.auth as core_auth
-import core.database as cdb
 import routes.task_routes as task_routes
 from core.database import ScheduledTask
 from core.database import TaskRun
 from src.task_scheduler import TaskScheduler
 
-_REAL_DATABASE_ATTRS = {
-    "Base": cdb.Base,
-    "SessionLocal": cdb.SessionLocal,
-    "ScheduledTask": ScheduledTask,
-    "TaskRun": TaskRun,
-}
-if hasattr(cdb, "engine"):
-    _REAL_DATABASE_ATTRS["engine"] = cdb.engine
-
-
-def _restore_module_binding(monkeypatch, name, module):
-    monkeypatch.setitem(sys.modules, name, module)
-    parent_name, _, attr = name.rpartition(".")
-    parent = sys.modules.get(parent_name)
-    if parent is not None:
-        monkeypatch.setattr(parent, attr, module, raising=False)
-
 
 @pytest.fixture()
-def task_db(monkeypatch, tmp_path):
-    _restore_module_binding(monkeypatch, "core.database", cdb)
-    for attr, value in _REAL_DATABASE_ATTRS.items():
-        monkeypatch.setattr(cdb, attr, value, raising=False)
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'tasks.db'}",
-        connect_args={"check_same_thread": False},
-        poolclass=NullPool,
-    )
-    cdb.Base.metadata.create_all(engine)
-    testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    monkeypatch.setattr(task_routes, "SessionLocal", testing_session)
-    monkeypatch.setattr(cdb, "SessionLocal", testing_session)
-    return testing_session
+def task_db(monkeypatch):
+    # task_routes reads its module-level SessionLocal, so bind it there too.
+    return bind_real_task_db(monkeypatch, task_routes)
 
 
 @pytest.fixture()
 def configured_auth(monkeypatch):
-    _restore_module_binding(monkeypatch, "core.auth", core_auth)
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-
-    class FakeAuthManager:
-        is_configured = True
-
-        def is_admin(self, user):
-            return user == "admin"
-
-    monkeypatch.setattr(core_auth, "AuthManager", FakeAuthManager)
+    install_fake_auth(monkeypatch)
 
 
 @pytest.fixture()

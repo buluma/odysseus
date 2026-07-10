@@ -167,3 +167,19 @@ def preserve_import_state(*module_names):
         # Phase 2: restore all parent-package attributes.
         for name, (_, saved_attr) in saved.items():
             _restore_parent_attr(name, saved_attr)
+
+
+def restore_module_binding(monkeypatch, dotted_name, module):
+    """Bind `module` as `dotted_name` in sys.modules AND on its parent
+    package attribute for the duration of a monkeypatch scope.
+
+    Complements clear_fake_database_modules: after evicting a stub, a test
+    that needs the real module visible to `import`/`from` statements pins it
+    both places (see the module docstring for why sys.modules alone is not
+    enough), and monkeypatch restores the prior state on teardown.
+    """
+    monkeypatch.setitem(sys.modules, dotted_name, module)
+    parent_name, _, attr = dotted_name.rpartition(".")
+    parent = sys.modules.get(parent_name)
+    if parent is not None:
+        monkeypatch.setattr(parent, attr, module, raising=False)
