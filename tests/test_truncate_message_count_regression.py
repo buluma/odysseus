@@ -70,3 +70,37 @@ def test_truncate_keeps_history_alias_for_context_messages(monkeypatch):
 
     session.history.append(ChatMessage("user", "after direct mutation"))
     assert session.get_context_messages()[-1]["content"] == "after direct mutation"
+
+
+def test_truncate_updates_in_memory_message_count(monkeypatch):
+    """The cached session's message_count must track the truncated history —
+    replace_messages updates it, truncate_messages must too, or list views
+    and get_session's hydration heuristic read an inflated count."""
+    from core.models import ChatMessage
+
+    sm, database, sm_mod = _make_manager(monkeypatch)
+    sid = "count-after-truncate"
+    sm.create_session(session_id=sid, name="t", endpoint_url="x",
+                      model="m", rag=False, owner="u")
+    for i in range(5):
+        sm.add_message(sid, ChatMessage("user", f"msg{i}"))
+
+    assert sm.truncate_messages(sid, 2) is True
+
+    session = sm.sessions[sid]
+    assert len(session.history) == 2
+    assert session.message_count == 2, (
+        f"in-memory message_count={session.message_count}, history has 2"
+    )
+
+
+def test_truncate_missing_session_raises_keyerror_even_with_negative_keep(monkeypatch):
+    """A missing session must surface as KeyError (the truncate route maps it
+    to 404) regardless of keep_count; returning False for a bad keep_count
+    must not mask 'session not found'."""
+    import pytest
+
+    sm, database, sm_mod = _make_manager(monkeypatch)
+
+    with pytest.raises(KeyError):
+        sm.truncate_messages("no-such-session", -1)

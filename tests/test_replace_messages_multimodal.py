@@ -27,6 +27,7 @@ def manager(monkeypatch):
     monkeypatch.setattr(sm, "SessionLocal", _TS)
     mgr = sm.SessionManager.__new__(sm.SessionManager)
     mgr.sessions = {}
+    mgr._init_locks()
     return mgr
 
 

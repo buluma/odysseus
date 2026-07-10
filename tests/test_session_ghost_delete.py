@@ -68,6 +68,7 @@ def _manager_with(sessions):
     """A SessionManager instance with the given in-memory sessions and no __init__."""
     mgr = SM.SessionManager.__new__(SM.SessionManager)
     mgr.sessions = dict(sessions)
+    mgr._init_locks()
     return mgr
 
 

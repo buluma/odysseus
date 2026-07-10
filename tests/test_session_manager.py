@@ -28,6 +28,7 @@ def sm():
     def patched_init(self, sessions_file=None):
         """__init__ that skips DB load and starts with empty cache."""
         self.sessions = {}
+        self._init_locks()
 
     SessionManager.__init__ = patched_init
 

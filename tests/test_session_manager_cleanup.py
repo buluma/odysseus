@@ -9,6 +9,7 @@ import core.session_manager as SM
 def _manager_with(sessions=None):
     manager = SessionManager.__new__(SessionManager)
     manager.sessions = dict(sessions or {})
+    manager._init_locks()
     return manager
 
 

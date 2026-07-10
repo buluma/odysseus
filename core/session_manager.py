@@ -73,33 +73,41 @@ class SessionManager:
     def __init__(self, sessions_file: str = None):
         # sessions_file kept for backward compat, not used
         self.sessions: Dict[str, Session] = {}
-        # FastAPI runs sync route handlers in a threadpool, so a still-streaming
-        # response's add_message() and a concurrent delete_session()/
-        # truncate_messages() call on the same session_id can genuinely
-        # interleave. Each mutator below takes this per-session lock for its
-        # whole read-modify-write, closing that race. Lock objects are never
-        # evicted from the dict — a bare threading.Lock is a couple hundred
-        # bytes, and evicting one while another thread might still be waiting
-        # on it (e.g. right after a delete) reintroduces the same race, so
-        # unbounded-but-tiny growth is the safer trade for a personal-scale app.
-        self._session_locks: Dict[str, threading.Lock] = {}
-        self._locks_guard = threading.Lock()
+        self._init_locks()
         self.load_sessions()
 
-    def _lock_for(self, session_id: str) -> threading.Lock:
-        # Some tests replace __init__ wholesale to skip the DB load (see
-        # tests/test_session_manager.py's `sm` fixture and
-        # SessionManager.__new__() use in test_session_ghost_delete.py), so
-        # this can't assume __init__ ran. setdefault() on self.__dict__ is
-        # safe under the GIL for this narrow one-time-per-instance case.
-        guard = self.__dict__.setdefault("_locks_guard", threading.Lock())
-        with guard:
-            locks = self.__dict__.setdefault("_session_locks", {})
-            lock = locks.get(session_id)
-            if lock is None:
-                lock = threading.Lock()
-                locks[session_id] = lock
+    def _init_locks(self):
+        """Initialize the per-session lock registry.
+
+        Split out of __init__ so tests that construct a SessionManager
+        without running __init__ (``__new__`` or a patched init, to skip the
+        DB load) can still set up the locking state the mutators rely on.
+
+        FastAPI runs sync route handlers in a threadpool, so a still-streaming
+        response's add_message() and a concurrent delete_session()/
+        truncate_messages() call on the same session_id can genuinely
+        interleave. Every path that mutates a session — the mutators below,
+        get_session's lazy hydration, and Session.add_message on the model
+        (the streaming write path) — takes the per-session lock for its
+        whole read-modify-write, closing that race. The locks are RLocks
+        because locked mutators call get_session, which locks too; same-
+        thread reacquisition must not deadlock. Lock objects are never
+        evicted from the dict — a bare lock is a couple hundred bytes, and
+        evicting one while another thread might still be waiting on it
+        (e.g. right after a delete) reintroduces the same race, so
+        unbounded-but-tiny growth is the safer trade for a personal-scale app.
+        """
+        self._session_locks: Dict[str, threading.RLock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _lock_for(self, session_id: str) -> threading.RLock:
+        lock = self._session_locks.get(session_id)
+        if lock is not None:
+            # Lock-free fast path — dict.get is GIL-atomic, and this runs on
+            # every streamed-message append once the session's lock exists.
             return lock
+        with self._locks_guard:
+            return self._session_locks.setdefault(session_id, threading.RLock())
 
     # ------------------------------------------------------------------
     # Loading
@@ -305,11 +313,14 @@ class SessionManager:
 
     def truncate_messages(self, session_id: str, keep_count: int) -> bool:
         """Truncate session history, keeping only the first `keep_count` messages."""
-        if keep_count < 0:
-            return False
-
         with self._lock_for(session_id):
+            # Resolve the session before validating keep_count so a missing
+            # session raises KeyError (the truncate route maps it to 404)
+            # instead of being conflated with "invalid keep_count" == False.
             session = self.get_session(session_id)
+
+            if keep_count < 0:
+                return False
 
             db = SessionLocal()
             try:
@@ -332,9 +343,12 @@ class SessionManager:
 
                 db.commit()
 
-                # Update in-memory
+                # Update in-memory — message_count too, mirroring
+                # replace_messages; a stale count misleads list views and
+                # get_session's hydration heuristic.
                 session.history = session.history[:keep_count]
                 session._history = session.history
+                session.message_count = len(session.history)
 
                 logger.info(f"Truncated session {session_id} to {keep_count} messages")
                 return True
@@ -406,23 +420,28 @@ class SessionManager:
 
         Sessions seeded by `load_sessions` start with empty history. The
         first read here hydrates them with the message rows.
+
+        Takes the per-session lock: hydration writes ``self.sessions``, and
+        an unlocked hydrate racing delete_session can re-insert a session
+        whose rows were just removed — the ghost-session bug (issue #1044).
         """
-        if session_id not in self.sessions:
-            self._load_session_from_db(session_id)
-        else:
-            cached = self.sessions[session_id]
-            # Lazy hydrate: metadata-only entries get their messages on first read.
-            if not cached.history and getattr(cached, "message_count", 0) > 0:
+        with self._lock_for(session_id):
+            if session_id not in self.sessions:
                 self._load_session_from_db(session_id)
+            else:
+                cached = self.sessions[session_id]
+                # Lazy hydrate: metadata-only entries get their messages on first read.
+                if not cached.history and getattr(cached, "message_count", 0) > 0:
+                    self._load_session_from_db(session_id)
 
-        # Keep model/endpoint metadata fresh. Endpoint deletion can clear the
-        # DB row while a session object is still cached in RAM.
-        self.sync_session_metadata(session_id)
+            # Keep model/endpoint metadata fresh. Endpoint deletion can clear the
+            # DB row while a session object is still cached in RAM.
+            self.sync_session_metadata(session_id)
 
-        # Update last_accessed
-        self._touch_session(session_id)
+            # Update last_accessed
+            self._touch_session(session_id)
 
-        return self.sessions[session_id]
+            return self.sessions[session_id]
 
     def sync_session_metadata(self, session_id: str) -> bool:
         """Refresh non-message session fields from the DB into the cached object."""
@@ -507,41 +526,42 @@ class SessionManager:
         owner: str = None
     ) -> Session:
         """Create a new session and save to database."""
-        db = SessionLocal()
-        try:
-            db_session = DbSession(
-                id=session_id,
-                name=name,
-                endpoint_url=endpoint_url,
-                model=model,
-                rag=rag,
-                headers={},
-                owner=owner,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
-            )
-            db.add(db_session)
-            db.commit()
+        with self._lock_for(session_id):
+            db = SessionLocal()
+            try:
+                db_session = DbSession(
+                    id=session_id,
+                    name=name,
+                    endpoint_url=endpoint_url,
+                    model=model,
+                    rag=rag,
+                    headers={},
+                    owner=owner,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
+                )
+                db.add(db_session)
+                db.commit()
 
-            session = Session(
-                id=session_id,
-                name=name,
-                endpoint_url=endpoint_url,
-                model=model,
-                rag=rag,
-                headers={},
-                owner=owner,
-            )
+                session = Session(
+                    id=session_id,
+                    name=name,
+                    endpoint_url=endpoint_url,
+                    model=model,
+                    rag=rag,
+                    headers={},
+                    owner=owner,
+                )
 
-            self.sessions[session_id] = session
-            return session
+                self.sessions[session_id] = session
+                return session
 
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error creating session: {e}")
-            raise
-        finally:
-            db.close()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error creating session: {e}")
+                raise
+            finally:
+                db.close()
 
     def delete_session(self, session_id: str) -> bool:
         """Permanently delete a session and all its messages."""
@@ -588,64 +608,67 @@ class SessionManager:
 
     def update_session_name(self, session_id: str, name: str):
         """Update session name."""
-        if session_id not in self.sessions:
-            return
+        with self._lock_for(session_id):
+            if session_id not in self.sessions:
+                return
 
-        db = SessionLocal()
-        try:
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.name = name
-                db_session.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                self.sessions[session_id].name = name
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error updating session name: {e}")
-            raise
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    db_session.name = name
+                    db_session.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    self.sessions[session_id].name = name
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error updating session name: {e}")
+                raise
+            finally:
+                db.close()
 
     def archive_session(self, session_id: str):
         """Archive a session."""
-        if session_id not in self.sessions:
-            return
+        with self._lock_for(session_id):
+            if session_id not in self.sessions:
+                return
 
-        db = SessionLocal()
-        try:
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.archived = True
-                db_session.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                self.sessions[session_id].archived = True
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error archiving session: {e}")
-            raise
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    db_session.archived = True
+                    db_session.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    self.sessions[session_id].archived = True
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error archiving session: {e}")
+                raise
+            finally:
+                db.close()
 
     def mark_important(self, session_id: str, important: bool = True):
         """Mark session as important."""
-        db = SessionLocal()
-        try:
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.is_important = important
-                db_session.updated_at = datetime.now(timezone.utc)
-                db.commit()
+        with self._lock_for(session_id):
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session:
+                    db_session.is_important = important
+                    db_session.updated_at = datetime.now(timezone.utc)
+                    db.commit()
 
-                if session_id in self.sessions:
-                    self.sessions[session_id].is_important = important
-            else:
-                raise KeyError(f"Session {session_id} not found")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error marking session important: {e}")
-            raise
-        finally:
-            db.close()
+                    if session_id in self.sessions:
+                        self.sessions[session_id].is_important = important
+                else:
+                    raise KeyError(f"Session {session_id} not found")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error marking session important: {e}")
+                raise
+            finally:
+                db.close()
 
     # ------------------------------------------------------------------
     # Queries
@@ -670,13 +693,14 @@ class SessionManager:
         overwrite an existing in-memory session. The task scheduler must
         use this instead of direct dict assignment.
         """
-        if session_id in self.sessions:
-            return self.sessions[session_id]
+        with self._lock_for(session_id):
+            if session_id in self.sessions:
+                return self.sessions[session_id]
 
-        session = self.create_session(session_id, name, endpoint_url, model, owner=owner)
-        if task is not None:
-            task.session_id = session_id
-        return session
+            session = self.create_session(session_id, name, endpoint_url, model, owner=owner)
+            if task is not None:
+                task.session_id = session_id
+            return session
 
     # ------------------------------------------------------------------
     # Cleanup
@@ -705,14 +729,29 @@ class SessionManager:
                 if db_session.message_count == 0:
                     if db_session.created_at is not None:
                         created = db_session.created_at
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
+                        if created.tzinfo is not None:
+                            # Compare in naive UTC — min_age comes from
+                            # utcnow_naive(), matching the DateTime columns;
+                            # an aware-vs-naive compare raises TypeError.
+                            created = created.replace(tzinfo=None)
                         if created > min_age:
                             continue  # Too young to delete
-                    if db_session.id in self.sessions:
-                        del self.sessions[db_session.id]
-                    db.delete(db_session)
-                    stats['deleted_empty'] += 1
+                    with self._lock_for(db_session.id):
+                        # Re-read under the lock: a message may have landed
+                        # while this thread waited (add_message holds the
+                        # same lock), and deleting then would drop fresh data.
+                        try:
+                            db.refresh(db_session)
+                        except Exception:
+                            continue  # row deleted out from under us
+                        if db_session.message_count != 0:
+                            continue
+                        self.sessions.pop(db_session.id, None)
+                        db.delete(db_session)
+                        # Commit while still holding the lock so a concurrent
+                        # get_session can't rehydrate from the doomed row.
+                        db.commit()
+                        stats['deleted_empty'] += 1
 
                 # Archive old sessions
                 elif (not db_session.archived and

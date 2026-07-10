@@ -98,13 +98,24 @@ class Session:
         Appends to the authoritative history list and increments
         message_count. Delegates to SessionManager for persistence
         if available.
-        """
-        self.history.append(message)
-        self.message_count = len(self.history)
 
-        # Delegate to session manager for persistence
-        if _SESSION_MANAGER_INSTANCE:
-            _SESSION_MANAGER_INSTANCE._persist_message(self.id, message)
+        Streaming responses append through this method — not through
+        SessionManager.add_message — so it must hold the manager's
+        per-session lock to keep the append+persist atomic against a
+        concurrent delete_session/truncate_messages on the same session.
+        """
+        manager = _SESSION_MANAGER_INSTANCE
+        if manager is None:
+            # Detached session (no singleton set, e.g. unit tests):
+            # in-memory only, nothing to serialize against.
+            self.history.append(message)
+            self.message_count = len(self.history)
+            return
+
+        with manager._lock_for(self.id):
+            self.history.append(message)
+            self.message_count = len(self.history)
+            manager._persist_message(self.id, message)
 
     def get_context_messages(self) -> List[Dict[str, Any]]:
         """Get messages in format for LLM API.
