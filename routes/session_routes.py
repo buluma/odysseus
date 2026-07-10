@@ -1,4 +1,5 @@
 # routes/session_routes.py
+import asyncio
 import re
 import html
 import json
@@ -576,7 +577,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 finally:
                     db.close()
 
-                if session_manager.delete_session(sid):
+                # Off-loop: holds the per-session lock across the delete
+                # commit — a contended lock here would stall the event loop.
+                if await asyncio.to_thread(session_manager.delete_session, sid):
                     deleted_count += 1
             except Exception:
                 pass
@@ -996,7 +999,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             },
         )
         new_history = [summary_msg] + recent
-        if not session_manager.replace_messages(session_id, new_history):
+        # Off-loop: holds the per-session lock across the history rewrite.
+        if not await asyncio.to_thread(
+                session_manager.replace_messages, session_id, new_history):
             raise HTTPException(500, "Failed to save compacted history")
 
         return {

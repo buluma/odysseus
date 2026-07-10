@@ -1,5 +1,6 @@
 """History routes — session history, truncation, fork, conversation topics."""
 
+import asyncio
 import json
 import uuid
 import logging
@@ -233,7 +234,10 @@ def setup_history_routes(session_manager) -> APIRouter:
         try:
             body = await request.json()
             keep_count = body.get("keep_count", 0)
-            result = session_manager.truncate_messages(session_id, keep_count)
+            # Off-loop: takes the per-session lock across a DB commit — a
+            # contended lock here would stall the whole event loop.
+            result = await asyncio.to_thread(
+                session_manager.truncate_messages, session_id, keep_count)
             return {"status": "ok", "kept": keep_count, "truncated": result}
         except KeyError:
             raise HTTPException(404, "Session not found")
@@ -252,7 +256,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             if not content:
                 raise HTTPException(400, "content is required")
             msg = ChatMessage(role=role, content=content, metadata=body.get("metadata"))
-            session_manager.add_message(session_id, msg)
+            # Off-loop: holds the per-session lock across the message commit.
+            await asyncio.to_thread(session_manager.add_message, session_id, msg)
             return {"status": "ok"}
         except KeyError:
             raise HTTPException(404, "Session not found")
