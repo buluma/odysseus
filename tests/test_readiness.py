@@ -70,3 +70,44 @@ def test_scheduler_check_fails_when_never_ticked(monkeypatch):
 
     assert result["checks"]["scheduler"]["ok"] is False
     assert result["ready"] is False
+
+
+def test_ready_path_is_auth_exempt():
+    """Pin that /api/ready is in AUTH_EXEMPT_EXACT.
+
+    Its own docstring says it's "suitable for an orchestrator readiness
+    probe" / external uptime monitoring, same as /api/health — but unlike
+    /api/health it wasn't actually exempted, so AuthMiddleware rejected every
+    probe with 401 before check_readiness() ever ran. Same text-pin technique
+    as test_converge_webhook_path_is_auth_exempt (importing app.py directly
+    pulls in the full FastAPI app graph, which tests/conftest.py avoids).
+    """
+    import os
+    app_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app.py",
+    )
+    with open(app_path, encoding="utf-8") as fh:
+        src = fh.read()
+
+    start = src.find("AUTH_EXEMPT_EXACT")
+    assert start != -1, "AUTH_EXEMPT_EXACT not declared in app.py"
+    lb = src.find("{", start)
+    assert lb != -1
+    depth = 0
+    end = -1
+    for i in range(lb, len(src)):
+        ch = src[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    assert end != -1, "could not find closing brace for AUTH_EXEMPT_EXACT"
+    body = src[lb + 1 : end]
+    assert "/api/ready" in body, (
+        "/api/ready must be in AUTH_EXEMPT_EXACT — orchestrator/watchdog "
+        "probes are rejected with 401 without it"
+    )
