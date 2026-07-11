@@ -23,6 +23,17 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# Module-level (not instance/app.state) so src/readiness.py can check scheduler
+# liveness without importing the full app.py module graph — tests/conftest.py
+# deliberately avoids importing app for test collection.
+_last_tick_at: datetime | None = None
+
+
+def get_last_tick_at() -> datetime | None:
+    """UTC timestamp of the most recent TaskScheduler._loop() iteration start."""
+    return _last_tick_at
+
+
 # Shell/file tools a scheduled task's agent should be offered by default,
 # mirroring the chat agent (where these are on unless a privilege or global
 # setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
@@ -662,6 +673,11 @@ class TaskScheduler:
     async def _loop(self):
         await asyncio.sleep(10)
         while self._running:
+            global _last_tick_at
+            # Set before _check_due_tasks() runs so a hang inside it (the Jul 4
+            # incident: loop dead, HTTP fine) leaves this frozen at the hang's
+            # start instead of hiding it behind a timestamp from before the hang.
+            _last_tick_at = _utcnow()
             try:
                 await self._check_due_tasks()
             except Exception:

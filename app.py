@@ -967,8 +967,15 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+async def health_check() -> Dict[str, object]:
+    from src.task_scheduler import get_last_tick_at
+    last_tick = get_last_tick_at()
+    age = (datetime.now(timezone.utc).replace(tzinfo=None) - last_tick).total_seconds() if last_tick else None
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "scheduler_last_tick_seconds_ago": age,
+    }
 
 @app.post("/api/client-perf")
 async def client_perf(request: Request):

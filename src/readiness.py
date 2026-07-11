@@ -11,6 +11,10 @@ import uuid
 from datetime import datetime
 from typing import Dict
 
+# 5x the scheduler loop's ~60s cadence — generous enough to absorb normal
+# jitter, tight enough to catch a real hang (Jul 4 incident) within minutes.
+SCHEDULER_STALE_THRESHOLD_SECONDS = 300
+
 
 def check_readiness() -> Dict[str, object]:
     """Run the readiness checks and return a JSON-serialisable report.
@@ -43,6 +47,21 @@ def check_readiness() -> Dict[str, object]:
         checks["data_dir"] = {"ok": True, "path": DATA_DIR}
     except Exception as e:
         checks["data_dir"] = {"ok": False, "error": str(e)}
+
+    # Scheduler liveness — background loop must still be ticking. A hung loop
+    # (Jul 4 incident: scheduler dead, HTTP fine) freezes its last-tick
+    # timestamp; a stale/missing tick fails readiness so an orchestrator can
+    # act instead of relying on a human to notice tasks stopped firing.
+    from src.task_scheduler import get_last_tick_at
+    last_tick = get_last_tick_at()
+    if last_tick is None:
+        checks["scheduler"] = {"ok": False, "error": "scheduler has not ticked yet"}
+    else:
+        age = (datetime.utcnow() - last_tick).total_seconds()
+        checks["scheduler"] = {
+            "ok": age <= SCHEDULER_STALE_THRESHOLD_SECONDS,
+            "last_tick_seconds_ago": round(age, 1),
+        }
 
     # Local-first: storage stays on the home machine (informational, never fatal).
     local_first = (
