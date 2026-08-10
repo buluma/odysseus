@@ -22,7 +22,7 @@ def _stub_heavy():
         sys.modules.setdefault(name, types.ModuleType(name))
 
 
-def _setup_isolated_db():
+def _setup_isolated_db(monkeypatch):
     import core.database as cd
     B = declarative_base()
 
@@ -49,17 +49,17 @@ def _setup_isolated_db():
 
     eng = create_engine("sqlite:///:memory:")
     B.metadata.create_all(eng)
-    cd.engine = eng
-    cd.SessionLocal = sessionmaker(bind=eng, autocommit=False, autoflush=False)
-    cd.ScheduledTask = ScheduledTask
-    cd.TaskRun = TaskRun
+    monkeypatch.setattr(cd, "engine", eng)
+    monkeypatch.setattr(cd, "SessionLocal", sessionmaker(bind=eng, autocommit=False, autoflush=False))
+    monkeypatch.setattr(cd, "ScheduledTask", ScheduledTask)
+    monkeypatch.setattr(cd, "TaskRun", TaskRun)
     return cd, ScheduledTask, TaskRun
 
 
-def _build_scheduler():
+def _build_scheduler(monkeypatch):
     """Bypass __init__, same recipe as test_scheduler_restart_doublefire.py."""
     _stub_heavy()
-    _setup_isolated_db()
+    _setup_isolated_db(monkeypatch)
 
     from src.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)
@@ -82,7 +82,7 @@ def test_loop_updates_last_tick_at_each_iteration(monkeypatch):
     import src.task_scheduler as ts
     monkeypatch.setattr(ts, "_last_tick_at", None)
 
-    sch = _build_scheduler()
+    sch = _build_scheduler(monkeypatch)
 
     calls = {"n": 0}
 
@@ -107,7 +107,7 @@ def test_loop_still_updates_last_tick_at_when_check_due_tasks_raises(monkeypatch
     import src.task_scheduler as ts
     monkeypatch.setattr(ts, "_last_tick_at", None)
 
-    sch = _build_scheduler()
+    sch = _build_scheduler(monkeypatch)
 
     calls = {"n": 0}
 
