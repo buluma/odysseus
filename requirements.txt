@@ -38,7 +38,7 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+mcp>=1.27,<2
 pyotp
 qrcode[pil]
 croniter
