@@ -5,7 +5,7 @@ python-dotenv
 httpx
 httpcore>=1.0.9,<2.0
 pydantic>=2.13.4
-pydantic-settings>=2.14.2
+pydantic-settings>=2.15.0
 SQLAlchemy
 pypdf
 beautifulsoup4
@@ -38,7 +38,7 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp>=1.27,<2
+mcp>=1.29.0,<2
 pyotp
 qrcode[pil]
 croniter
