@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,17 @@ def _decode_key(item_id: str) -> str:
 
 def _normalize_sender(sender: str | None) -> str:
     return (sender or "").strip().lower()
+
+
+_PLACEHOLDER_SUBJECT_RE = re.compile(r"^(\[email\]\s*)?\(no subject\)$", re.IGNORECASE)
+
+
+def _is_placeholder_subject(subject: str | None) -> bool:
+    """True for an empty subject or the "(no subject)" placeholder text this
+    module (and Converge) stamp in when a message's subject couldn't be
+    extracted — as opposed to a real, if short, subject line."""
+    value = (subject or "").strip()
+    return not value or bool(_PLACEHOLDER_SUBJECT_RE.match(value))
 
 
 def _action_state(owner: str | None) -> dict[str, Any]:
@@ -303,6 +315,27 @@ def setup_openclaw_inbox_routes() -> APIRouter:
         base_url, api_key = _converge_config()
 
         item = _find_item(owner=getattr(request.state, "api_token_owner", None), item_id=item_id)
+
+        # Second line of defense (behind Converge's own 422 rejection of
+        # "(no subject)" tickets): a message that scored high enough to
+        # surface in the urgent list but whose subject/sender/reason all
+        # came back empty is a message the IMAP/triage pipeline failed to
+        # extract, not a genuinely urgent email — refuse to auto-submit it
+        # unless a caller explicitly supplied real subject or description
+        # content to override the empty verdict.
+        has_override_content = bool((body.subject or "").strip()) or bool((body.description or "").strip())
+        if (
+            not has_override_content
+            and _is_placeholder_subject(item.get("subject"))
+            and not (item.get("from") or "").strip()
+            and not (item.get("reason") or "").strip()
+        ):
+            raise HTTPException(
+                422,
+                "Refusing to submit a ticket for this email: subject, sender, and body could not be "
+                "extracted (unparseable message). Supply an explicit subject/description to override.",
+            )
+
         subject = body.subject or (item.get("subject") or "(no subject)")[:180]
         tags = [str(tag) for tag in (item.get("tags") or []) if str(tag).strip()]
         description = body.description or "\n".join([
