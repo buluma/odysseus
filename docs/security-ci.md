@@ -97,6 +97,6 @@ let the workflows run on one pull request first, then add them here.
 ## Keeping it current
 
 `.github/dependabot.yml` opens small weekly pull requests to update Python and
-npm packages, the Docker base image, and the pinned automation actions
+bun packages, the Docker base image, and the pinned automation actions
 themselves. Review and merge those like any other pull request; they keep the
 project patched without manual tracking.
