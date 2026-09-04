@@ -7,7 +7,7 @@
 # the deepest check in the suite and the most valuable for a high-profile
 # target.
 #
-# It runs on every push to main and on a weekly schedule (to catch newly
+# It runs on every push to local and on a weekly schedule (to catch newly
 # disclosed query patterns against unchanged code). It deliberately does NOT
 # run on pull requests: most PRs here come from forks, whose read-only token
 # cannot publish results, which would produce confusing failures. To scan pull
@@ -19,7 +19,7 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
+    branches: [local]
   schedule:
     # Weekly, Monday 06:00 UTC.
     - cron: '0 6 * * 1'

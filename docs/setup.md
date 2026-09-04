@@ -4,41 +4,30 @@ This page keeps the detailed install, deployment, troubleshooting, and configura
 
 ## Quick Start
 
-> **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main).
+> **Branch note:** `local` is the default branch and the one active development merges into — `git clone` gets it automatically. `dev` and `main` both exist but are stale (no longer receiving changes); ignore them.
 
-Defaults work out of the box: clone, run, then configure models/search/email
-inside **Settings**. Only edit `.env` for deployment-level overrides like
-`APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
+Defaults work out of the box: clone, run, then configure models/search/email inside **Settings**. Only edit `.env` for deployment-level overrides like `APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
-On first setup, Odysseus creates an admin account (`admin` unless
-`ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal.
-For Docker installs, the same line is in `docker compose logs odysseus`.
-Use that for the first login, then change it in **Settings**.
+On first setup, Odysseus creates an admin account (`admin` unless `ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal. For Docker installs, the same line is in `docker compose logs odysseus`. Use that for the first login, then change it in **Settings**.
 
-Contributing? See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, testing, and
-pull request guidelines.
+Contributing? See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, testing, and pull request guidelines.
 
 ### Docker (recommended)
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/buluma/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
 To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
 
-Open `http://localhost:7000` when the containers are healthy. Docker Compose
-binds the web UI to `127.0.0.1` by default. If the port is taken, set
-`APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
-only when you intentionally want LAN/reverse-proxy access.
+Open `http://localhost:7000` when the containers are healthy. Docker Compose binds the web UI to `127.0.0.1` by default. If the port is taken, set `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
-> **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
-> Cookbook serves local models on CPU only. For GPU-accelerated model serving,
-> run natively instead — see [Apple Silicon](#apple-silicon) below.
+> **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so Cookbook serves local models on CPU only. For GPU-accelerated model serving, run natively instead — see [Apple Silicon](#apple-silicon) below.
 
 ### Native Linux / macOS
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/buluma/odysseus.git
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
@@ -46,17 +35,13 @@ pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
-Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves. The app itself is lightweight; local model serving is the
-heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
+Requirements: Python 3.11+. Cookbook also needs `tmux` for background model downloads and serves. The app itself is lightweight; local model serving is the heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
-Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
-M-series Mac, run Odysseus natively:
+Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an M-series Mac, run Odysseus natively:
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/buluma/odysseus.git
 cd odysseus
 ./start-macos.sh
 ```
@@ -68,11 +53,9 @@ ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
 # then open http://<tailscale-ip>:7860
 ```
 
-The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
-set there are picked up automatically without a command-line override each run.
+The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT` set there are picked up automatically without a command-line override each run.
 
-Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
-expose this port directly to the public internet. To build a clickable app wrapper:
+Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not expose this port directly to the public internet. To build a clickable app wrapper:
 
 ```bash
 ./build-macos-app.sh
@@ -81,44 +64,28 @@ expose this port directly to the public internet. To build a clickable app wrapp
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
 
-**Docker bundled services.** Compose starts Odysseus, ChromaDB, SearXNG, and
-ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so
-they are reachable from the host but not exposed to your LAN/public internet
-unless you opt in.
+**Docker bundled services.** Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so they are reachable from the host but not exposed to your LAN/public internet unless you opt in.
 
-**Cookbook storage in Docker.** Downloads live in `./data/huggingface`
-(`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
-serve engines live in `./data/local` (`~/.local` in the container), so they
-survive container recreation.
+**Cookbook storage in Docker.** Downloads live in `./data/huggingface` (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and serve engines live in `./data/local` (`~/.local` in the container), so they survive container recreation.
 
-**Remote servers.** In **Cookbook -> Settings -> Servers**, generate the
-Odysseus SSH key and add the public key to the remote server's
-`~/.ssh/authorized_keys`. From the host you can also run:
+**Remote servers.** In **Cookbook -> Settings -> Servers**, generate the Odysseus SSH key and add the public key to the remote server's `~/.ssh/authorized_keys`. From the host you can also run:
 
 ```bash
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
-**Host Docker access (explicit opt-in).** Default Docker Compose intentionally
-does not mount `/var/run/docker.sock`. You can still connect Odysseus to
-existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker
-socket access.
+**Host Docker access (explicit opt-in).** Default Docker Compose intentionally does not mount `/var/run/docker.sock`. You can still connect Odysseus to existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker socket access.
 
-Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw
-Docker socket access is high-trust because it can effectively grant broad
-control over the host Docker daemon. Remote server Docker workflows over SSH
-remain preferred.
+Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw Docker socket access is high-trust because it can effectively grant broad control over the host Docker daemon. Remote server Docker workflows over SSH remain preferred.
 
-Place these values in `.env`, or export them in the shell before running
-`docker compose`:
+Place these values in `.env`, or export them in the shell before running `docker compose`:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
 DOCKER_GID=<host docker group gid>
 ```
 
-Combine host Docker access with a GPU overlay when both are intentionally
-required:
+Combine host Docker access with a GPU overlay when both are intentionally required:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
@@ -126,13 +93,9 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml:docker/host-docker.yml
 ```
 
-**Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
-only detect GPUs that Docker exposes to the container — if the host runtime or
-device passthrough is not configured, Cookbook sees the iGPU, another card, or
-CPU instead of your intended GPU.
+**Docker GPU overlays.** CPU-only users can skip this section. Cookbook can only detect GPUs that Docker exposes to the container — if the host runtime or device passthrough is not configured, Cookbook sees the iGPU, another card, or CPU instead of your intended GPU.
 
-For NVIDIA, `scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can
-optionally install the host runtime or update `.env`.
+For NVIDIA, `scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can optionally install the host runtime or update `.env`.
 
 ```bash
 # Read-only diagnostic (default — installs nothing, never edits .env):
@@ -154,11 +117,8 @@ scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
 Safety notes:
 - The app never installs host GPU runtime automatically.
 - The app never edits `.env` automatically.
-- `.env` is only modified when `--enable-nvidia-overlay` is explicitly passed,
-  and only after GPU passthrough succeeds. `--yes` skips prompts but does not
-  bypass the passthrough gate.
-- `.env.bak.*` backups created by `--enable-nvidia-overlay` are ignored by
-  Git and the Docker build context.
+- `.env` is only modified when `--enable-nvidia-overlay` is explicitly passed, and only after GPU passthrough succeeds. `--yes` skips prompts but does not bypass the passthrough gate.
+- `.env.bak.*` backups created by `--enable-nvidia-overlay` are ignored by Git and the Docker build context.
 
 To enable manually without the script, add this to `.env`:
 
@@ -172,8 +132,7 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 scripts/check-docker-amd-gpu.sh
 ```
 
-Then add the reported values to `.env`, replacing `RENDER_GID` with your host's
-numeric render group id:
+Then add the reported values to `.env`, replacing `RENDER_GID` with your host's numeric render group id:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
@@ -182,19 +141,12 @@ RENDER_GID=989
 
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
 
-**Stack-management UIs (Portainer, Coolify, Dockhand, etc.).** These tools
-often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
-or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
-overlay workflow above. For stack UIs, point the stack at one of the standalone
-files instead, which bundle the base stack plus the GPU settings:
+**Stack-management UIs (Portainer, Coolify, Dockhand, etc.).** These tools often accept only a single Compose file and do not reliably honor `COMPOSE_FILE` or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE` overlay workflow above. For stack UIs, point the stack at one of the standalone files instead, which bundle the base stack plus the GPU settings:
 
-- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
-  on the host.
-- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
-  `video`/`render` group membership, and `RENDER_GID` when needed.
+- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit on the host.
+- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the `video`/`render` group membership, and `RENDER_GID` when needed.
 
-The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
-source of truth; the standalone files mirror them for single-file deployments.
+The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the source of truth; the standalone files mirror them for single-file deployments.
 
 Verify after enabling either overlay:
 
@@ -203,21 +155,11 @@ docker compose exec odysseus nvidia-smi -L   # NVIDIA
 docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls -l /dev/kfd /dev/dri/renderD*'  # AMD
 ```
 
-> **GPU passthrough ≠ llama.cpp CUDA.** `nvidia-smi` passing inside the
-> container confirms Docker GPU access, but llama.cpp also needs `cudart` and
-> the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
-> library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
-> tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
-> not a Docker passthrough failure. Reinstall the serve engine via
+> **GPU passthrough ≠ llama.cpp CUDA.** `nvidia-smi` passing inside the container confirms Docker GPU access, but llama.cpp also needs `cudart` and the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart` `library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue — not a Docker passthrough failure. Reinstall the serve engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
->
-> The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside
-> the container confirms device passthrough, not ROCm userspace or a
-> ROCm-enabled vLLM/llama.cpp build. `rocm-smi` and `rocminfo` are not expected
-> inside the slim Odysseus image.
+> The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside the container confirms device passthrough, not ROCm userspace or a ROCm-enabled vLLM/llama.cpp build. `rocm-smi` and `rocminfo` are not expected inside the slim Odysseus image.
 
-**Ollama with Docker.** If Ollama runs on the host, add this endpoint in
-Settings:
+**Ollama with Docker.** If Ollama runs on the host, add this endpoint in Settings:
 
 ```text
 http://host.docker.internal:11434/v1
@@ -229,12 +171,7 @@ Ollama must listen outside its own loopback interface:
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
-This connects Odysseus in Docker to an Ollama server that is already running on
-your host machine; it does not start Ollama inside the container.
-`host.docker.internal` is Docker's hostname for the host machine from inside the
-container. Cookbook **Serve** is a separate workflow for serving downloaded
-models through Odysseus/llama.cpp, so Windows users with an existing Ollama
-install usually only need to add the endpoint in Settings.
+This connects Odysseus in Docker to an Ollama server that is already running on your host machine; it does not start Ollama inside the container. `host.docker.internal` is Docker's hostname for the host machine from inside the container. Cookbook **Serve** is a separate workflow for serving downloaded models through Odysseus/llama.cpp, so Windows users with an existing Ollama install usually only need to add the endpoint in Settings.
 
 **Useful checks.**
 
@@ -244,20 +181,16 @@ docker compose logs --tail=120 odysseus
 docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
 
-**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
-runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by Odysseus.
+**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv, runs setup, and starts uvicorn on port `7860` because AirPlay often holds `7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and do not run on macOS. MLX-only models are not served by Odysseus.
 
 </details>
 
 ### Native Windows
 
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
-server; safe to re-run):
+**One-command launcher** (creates the venv, installs deps, runs setup, starts the server; safe to re-run):
 
 ```powershell
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/buluma/odysseus.git
 cd odysseus
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
@@ -265,7 +198,7 @@ powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 Or do it by hand:
 
 ```powershell
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/buluma/odysseus.git
 cd odysseus
 py -3.11 -m venv venv
 venv\Scripts\Activate.ps1
@@ -274,32 +207,19 @@ python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
-If `python` points at an older interpreter, use `py -3.12` (or another installed
-3.11+ version) for the venv step.
+If `python` points at an older interpreter, use `py -3.12` (or another installed 3.11+ version) for the venv step.
 
-**Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
-does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
-alone leaves the native Windows server on loopback. Pass the launcher's
-`-BindHost` flag instead:
+**Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env` alone leaves the native Windows server on loopback. Pass the launcher's `-BindHost` flag instead:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -BindHost 0.0.0.0
 ```
 
-The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
-outside loopback only for a trusted LAN/VPN such as Tailscale: keep
-`AUTH_ENABLED=true` and do not expose the port directly to the public internet.
+The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind outside loopback only for a trusted LAN/VPN such as Tailscale: keep `AUTH_ENABLED=true` and do not expose the port directly to the public internet.
 
-**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
-email, calendar, deep research) runs fully native. For full **Cookbook** background
-model downloads and the agent shell tool, also install
-[Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
-Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
-[Ollama](https://ollama.com/download) is the easiest path — point Odysseus at
-`http://localhost:11434/v1` in Settings.
+**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents, email, calendar, deep research) runs fully native. For full **Cookbook** background model downloads and the agent shell tool, also install [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`). Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows, [Ollama](https://ollama.com/download) is the easiest path — point Odysseus at `http://localhost:11434/v1` in Settings.
 
-Open `http://localhost:7000`, log in with the generated admin password,
-and configure everything else inside **Settings**.
+Open `http://localhost:7000`, log in with the generated admin password, and configure everything else inside **Settings**.
 
 ## Troubleshooting & Advanced Setup
 
@@ -329,12 +249,16 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 ### Common self-host traps (30-second fixes)
 A grab-bag of small gotchas that otherwise turn into long debugging sessions.
 
-- **`AUTH_ENABLED=false` is ignored / you're still forced to log in (Windows).** If you edited `.env` in Notepad it may have saved a UTF-8 **BOM**, turning the first key into `﻿AUTH_ENABLED` so it is never matched. Odysseus loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
+- **`AUTH_ENABLED=false` is ignored / you're still forced to log in (Windows).** If you edited `.env` in Notepad it may have saved a UTF-8 **BOM**, turning the first key into `\ufeffAUTH_ENABLED` so it is never matched. Odysseus loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
 - **macOS: the app isn't at `http://localhost:7000`.** macOS AirPlay Receiver usually holds port `7000`, so the macOS start script serves on **`7860`** instead — open `http://localhost:7860`. To use `7000`, free it (System Settings → General → AirDrop & Handoff → turn off *AirPlay Receiver*) and set `APP_PORT=7000`.
 - **Copy buttons do nothing over a plain-HTTP Tailscale/LAN URL.** Browsers only expose the clipboard API (`navigator.clipboard`) on **secure origins** — HTTPS, or `localhost`. Over `http://100.x.y.z:7860` it is blocked. Serve over HTTPS (see *HTTPS + LAN/Tailscale exposure* above); `localhost` is exempt, so copy still works on the host itself.
 - **Self-hosted ntfy reminders don't reach your phone.** Two things: (1) the bundled ntfy binds to loopback by default — to reach it from your phone set `NTFY_BIND` to your host/Tailscale IP and `NTFY_BASE_URL` to the same server URL in `.env`, then recreate the ntfy container (see the `NTFY_*` block in `.env.example`); (2) in the ntfy **Android** app, subscribe to the topic with **Instant delivery** enabled — non-`ntfy.sh` servers don't get instant push otherwise.
 - **Local mail (Dovecot) login fails: "Plaintext authentication disallowed on non-encrypted connections."** Your IMAP/SMTP server is refusing cleartext auth over an unencrypted link. Prefer enabling TLS on the mail server; on a trusted LAN only, you can allow cleartext (Dovecot: `disable_plaintext_auth = no`).
 - **Calendar/contacts (Radicale) won't sync.** Point Odysseus at the **full collection URL** with its trailing slash — e.g. `http://host:5232/<user>/<collection-id>/` — not just the server root. Radicale shows this address for each calendar/address book in its web UI.
+- **Google Calendar OAuth redirect fails behind reverse proxy / Tailscale.** If the Google OAuth consent flow redirects to `http://localhost:7000/...` instead of your reverse proxy domain, set `GOOGLE_CALENDAR_OAUTH_REDIRECT_URI` explicitly in `.env` (e.g. `https://odysseus.yourdomain.ts.net/api/calendar/oauth/google/callback`) and ensure that exact callback URI is configured under *Authorized redirect URIs* in the Google Cloud Console.
+- **Monitoring liveness vs readiness.** Odysseus exposes two health probes:
+  - `GET /api/health` — Liveness check reporting process status, task runner liveness, and scheduler tick age.
+  - `GET /api/ready` — Readiness probe verifying database write access, `data/` directory writability, and scheduler loop freshness (returns `503` if the scheduler loop tick age exceeds 300 seconds). `/api/ready` is exempt from authentication so container orchestrators, Docker healthchecks, or uptime monitors can query it without credentials.
 
 ### Optional Dependencies
 `requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
@@ -347,8 +271,7 @@ A grab-bag of small gotchas that otherwise turn into long debugging sessions.
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
 ### Faster, reproducible installs with uv (optional)
-[uv](https://docs.astral.sh/uv/) works as a drop-in replacement for the
-venv + pip steps in the native install guides, no project changes are needed but this change results in faster installs along with a lockfile for reproducible environments. After [installing `uv`](https://docs.astral.sh/uv/getting-started/installation/), use:
+[uv](https://docs.astral.sh/uv/) works as a drop-in replacement for the venv + pip steps in the native install guides, no project changes are needed but this change results in faster installs along with a lockfile for reproducible environments. After [installing `uv`](https://docs.astral.sh/uv/getting-started/installation/), use:
 
 ```bash
 uv venv venv --python 3.13
@@ -366,10 +289,7 @@ uv pip sync requirements.lock                          # reproduce it exactly la
 `requirements.lock` is gitignored and platform-specific (compile it on the OS you deploy to). Regenerate it deliberately when you want to take upgrades. The plain `uv pip install -r requirements.txt` keeps following the unpinned requirements like pip does.
 
 ### Outlook / Office 365 email
-Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
-and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
-passwords will fail. See [docs/email-outlook.md](docs/email-outlook.md) for the
-current limitation and the planned integration direction.
+Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox passwords will fail. See [email-outlook.md](email-outlook.md) for the current limitation and the planned integration direction.
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
@@ -395,8 +315,7 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 3. Put the authenticated Odysseus web/API entrypoint behind that layer.
 4. Keep raw service and model ports internal-only.
 
-Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
-`ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
+Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`. `ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
 
 Common internal-only ports from the default docs/compose setup:
 
@@ -410,9 +329,7 @@ Common internal-only ports from the default docs/compose setup:
 | `8000-8020` | Common local model/provider APIs |
 
 ## Configuration
-Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
-for deployment-level defaults and secrets you want present before first boot.
-Key settings:
+Most setup is done inside the app with `/setup` or **Settings**. Use `.env` for deployment-level defaults and secrets you want present before first boot. Key settings:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -433,6 +350,9 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `GOOGLE_OAUTH_CLIENT_ID` | -- | Google Calendar OAuth client ID for calendar sync |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | -- | Google Calendar OAuth client secret |
+| `GOOGLE_CALENDAR_OAUTH_REDIRECT_URI` | auto-derived from Host | Explicit redirect URI callback for Google Calendar OAuth (set when behind reverse proxy/Tailscale) |
 | `ODYSSEUS_CHAT_UPLOAD_MAX_BYTES` | `10485760` | Chat/agent attachment cap in bytes. Raise for larger local PDFs or text documents. |
 | `ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES` | `104857600` | Gallery image upload cap in bytes (100 MB). |
 | `ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES` | `26214400` | Gallery transform input cap in bytes (25 MB). |
@@ -468,8 +388,6 @@ docs/      landing page (index.html) + preview clips
 ```
 
 ## Data
-All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
-`memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents), `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
-To back up or restore everything in `data/`, see the
-[Backup & Restore guide](backup-restore.md).
+To back up or restore everything in `data/`, see the [Backup & Restore guide](backup-restore.md).
