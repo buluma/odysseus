@@ -28,8 +28,9 @@ Homelab services are defined in a JSON registry file.
 
 ## Security and Scopes
 
-Access to the Homelab API is protected by several scopes. Read-only APIs require `homelab:read`.
-Operations that mutate state require explicit write scopes such as `homelab:write`, `n8n:write`, `events:write`, or `events:resolve`. The default `openclaw_bridge` token profile does not include write scopes.
+Access to the Homelab API is protected by several scopes. Read-only APIs require `homelab:read`. Operations that mutate infrastructure state require explicit write scopes:
+- Event lifecycle (`events:write`, `events:ack`, `events:resolve`) and ticket drafting (`converge:write`) are pre-included in the standard `openclaw_bridge` token profile.
+- Direct infrastructure mutations like `homelab:write` (Docker container restart) and `n8n:write` (workflow trigger/rerun) are intentionally omitted from `openclaw_bridge` and require custom tokens or explicit scope grants.
 
 - Container health checks use secure, structured commands (`docker inspect`) with strict shell execution disabled to prevent arbitrary code injection.
 - Odysseus will only query containers explicitly listed in your `homelab_services.json` registry. Restart is further restricted to services whose registry entry has `restart_allowed: true`.
@@ -38,7 +39,7 @@ Operations that mutate state require explicit write scopes such as `homelab:writ
 ## Write Operations (Phase 4)
 Write operations provide restricted abilities to mutate homelab state. These APIs are exposed via the OpenClaw bridge rather than the core routes.
 - **Docker Restart**: Restarts a container associated with a registered homelab service. Requires `homelab:write`.
-- **N8N Rerun**: Route is scaffolded but returns `501` until a real n8n rerun API call is implemented. Requires `n8n:write`.
+- **N8N Rerun**: Retries the last failed execution of an allowlisted workflow via the real n8n API (`N8nClient.retry_execution`). Requires `n8n:write` + `confirm: true`.
 - **Redmine Ticket**: Route is scaffolded but returns `501` unless `CONVERGE_TICKET_CREATE_PATH` points at an explicit Converge service-token ticket creation endpoint. Requires `homelab:write`.
 
 ## Incident Assistant
@@ -56,8 +57,7 @@ For comprehensive OpenClaw API examples, see `docs/openclaw-bridge.md`.
 ### 1. List All Services
 Retrieve the full registry of homelab services.
 
-**Route:** `GET /api/homelab/services`
-**Requires:** `homelab:read`
+**Route:** `GET /api/homelab/services` **Requires:** `homelab:read`
 
 **Example:**
 ```bash
@@ -67,8 +67,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:7000/api/homelab/servic
 ### 2. Get Specific Service
 Retrieve the configuration details for a single service.
 
-**Route:** `GET /api/homelab/services/{name}`
-**Requires:** `homelab:read`
+**Route:** `GET /api/homelab/services/{name}` **Requires:** `homelab:read`
 
 **Example:**
 ```bash
@@ -78,8 +77,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:7000/api/homelab/servic
 ### 3. Check Homelab Health
 Perform non-destructive health checks against all registered services. This endpoint queries Docker statuses (if `container` is provided) and HTTP statuses (if `health_url` or `url` is provided).
 
-**Route:** `GET /api/homelab/health`
-**Requires:** `homelab:read`
+**Route:** `GET /api/homelab/health` **Requires:** `homelab:read`
 
 **Example:**
 ```bash
@@ -101,6 +99,32 @@ curl -H "Authorization: Bearer <token>" http://localhost:7000/api/homelab/health
 }
 ```
 *Note: The top-level `status` can be `"ok"`, `"degraded"`, or `"error"` depending on the individual service statuses.*
+
+### 4. Application Readiness & Liveness
+Verify that the host Odysseus application is healthy and its internal background scheduler is ticking normally.
+
+**Route:** `GET /api/ready` **Requires:** None (exempt from authentication for orchestrators and health checks)
+
+**Example:**
+```bash
+curl http://localhost:7000/api/ready
+```
+
+**Response Format:**
+```json
+{
+  "status": "ready",
+  "checks": {
+    "db": "ok",
+    "data_dir": "ok",
+    "scheduler": {
+      "status": "ok",
+      "tick_age_seconds": 12.4
+    }
+  }
+}
+```
+*Note: Returns HTTP 503 if database access fails or the scheduler loop tick age exceeds 300 seconds.*
 
 ## Performance & Concurrency (Phase 2.1)
 
