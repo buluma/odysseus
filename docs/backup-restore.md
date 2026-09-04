@@ -1,6 +1,6 @@
 # Backup & Restore
 
-Odysseus keeps all of your state in the `data/` directory — the SQLite database (`app.db`), the Fernet encryption key (`data/.app_key`), the vault, memory, RAG indexes, personal documents, and uploads. The `scripts/odysseus-backup` tool snapshots that directory into a single gzip tarball and restores it later.
+Odysseus keeps most of your state in the `data/` directory — the SQLite database (`app.db`), the Fernet encryption key (`data/.app_key`), the vault, memory, RAG indexes, personal documents, and uploads. The `scripts/odysseus-backup` tool snapshots that directory into a single gzip tarball and restores it later. One exception: in the Docker setup, ChromaDB's vectors live in a separate Compose-managed volume, not under `data/` — see the ChromaDB caveat near the bottom of this doc for backing that up too.
 
 Snapshots are safe to take while the app is running: SQLite databases are copied through SQLite's own `.backup` API rather than a raw file copy, so an in-flight write can't corrupt the snapshot.
 

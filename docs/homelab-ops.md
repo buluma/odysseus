@@ -113,18 +113,18 @@ curl http://localhost:7000/api/ready
 **Response Format:**
 ```json
 {
-  "status": "ready",
+  "ready": true,
+  "version": "…",
   "checks": {
-    "db": "ok",
-    "data_dir": "ok",
-    "scheduler": {
-      "status": "ok",
-      "tick_age_seconds": 12.4
-    }
-  }
+    "database": { "ok": true },
+    "data_dir": { "ok": true, "path": "…" },
+    "scheduler": { "ok": true, "last_tick_seconds_ago": 12.4 },
+    "local_first": { "ok": true, "local": true }
+  },
+  "timestamp": "…"
 }
 ```
-*Note: Returns HTTP 503 if database access fails or the scheduler loop tick age exceeds 300 seconds.*
+*Note: `ready` is true only when every critical check (`database`, `data_dir`, `scheduler`) passes — `local_first` is informational and never fails readiness. Returns HTTP 503 if the database is unreachable, `data_dir` isn't writable, or the scheduler loop's last tick is more than 300 seconds old.*
 
 ## Performance & Concurrency (Phase 2.1)
 

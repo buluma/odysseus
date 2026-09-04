@@ -39,7 +39,7 @@ Typing `/tickets` alone runs the `digest`.
 
 ## n8n — `/n8n`
 
-Reads n8n via `N8N_BASE_URL` + `N8N_API_KEY`. Write operations (`trigger`, `pause`) require the workflow name to appear in `N8N_WORKFLOW_ALLOWLIST` and display a confirmation prompt. Endpoints are under `/api/openclaw/n8n/`.
+Reads n8n via `N8N_BASE_URL` + `N8N_API_KEY`. Write operations (`trigger`, `pause`) require the workflow name to appear in `N8N_WORKFLOW_ALLOWLIST` (unset or empty denies everything — fail-closed) and display a confirmation prompt. Endpoints are under `/api/openclaw/n8n/`. This is a different allowlist from `OPENCLAW_ALLOWED_WORKFLOWS` (see [openclaw-bridge.md](openclaw-bridge.md)), which gates the separate scheduled-workflow-trigger bridge route and fails open (empty disables enforcement) instead of closed.
 
 | Command | Aliases | What it does | Endpoint |
 |---------|---------|--------------|----------|

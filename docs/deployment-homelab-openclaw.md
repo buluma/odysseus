@@ -176,7 +176,7 @@ volumes:
   - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
 
-> **Security note:** Mounting the Docker socket — even with `:ro` — still grants significant daemon access. The `:ro` flag only prevents the bind mount itself from being remounted; the underlying Unix socket remains fully writable. Odysseus currently only issues a hard-coded `docker inspect` command with `shell=False`, so it does not execute arbitrary commands or mutate containers. For a homelab setup where you trust the container, this is acceptable. For a more hardened deployment, use Option B.
+> **Security note:** Mounting the Docker socket — even with `:ro` — still grants significant daemon access. The `:ro` flag only prevents the bind mount itself from being remounted; the underlying Unix socket remains fully writable. Odysseus doesn't execute arbitrary commands, but it isn't read-only either: the OpenClaw bridge's `_docker_api_request` (socket path from `HOMELAB_DOCKER_SOCKET`, default `/var/run/docker.sock`) issues an allowlisted `POST /containers/{container}/restart` for the Docker Restart write operation and the incident-restart flow — both gated behind `homelab:write` scope and an explicit `confirm: true`, but real mutations nonetheless. (`CADDY_CONTAINER`, used for Caddy-specific log/config reads, is also environment-controlled — `os.getenv('CADDY_CONTAINER', 'caddy')`.) For a homelab setup where you trust the container and the scope grants on your tokens, this is acceptable. For a more hardened deployment, use Option B.
 
 ### Option B — docker-socket-proxy (recommended)
 
@@ -309,7 +309,7 @@ Expected response shapes (fields vary; do not assert exact values):
 
 | Route | Shape |
 |---|---|
-| `GET /api/ready` | `{"status":"ready","checks":{"db":"ok","data_dir":"ok","scheduler":{"status":"ok","tick_age_seconds":...}}}` |
+| `GET /api/ready` | `{"ready":true,"version":"…","checks":{"database":{"ok":true},"data_dir":{"ok":true,"path":"…"},"scheduler":{"ok":true,"last_tick_seconds_ago":12.4},"local_first":{"ok":true,"local":true}},"timestamp":"…"}` |
 | `GET /api/openclaw/health` | `{"status":"ok","message":"OpenClaw bridge reachable","owner":"…","odysseus":{"ok":true},"task_runner":{…}}` |
 | `GET /api/openclaw/converge/health` | `{"status":"ok","converge":{"configured":true,"ok":true,"health_status":200,…}}` |
 | `GET /api/homelab/health` | `{"status":"ok","services":[{"name":"…","status":"ok",…}]}` |

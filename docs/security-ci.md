@@ -65,7 +65,7 @@ Note: a check name only appears in the list after it has run at least once, so l
 2. Turn on **Dependency graph** (usually on by default for public repos) -- this powers Dependency review and Dependabot.
 3. Turn on **Dependabot alerts** and **Dependabot security updates**.
 4. Under **Code scanning**, you have two ways to scan the app code with CodeQL:
-   - The included `codeql.yml` workflow already scans `main` and runs weekly.
+   - The included `codeql.yml` workflow already scans `local` (the default branch) and runs weekly.
    - To also scan **pull requests** (recommended, since most contributions come from forks), click **Set up -> Default** under Code scanning. GitHub then runs CodeQL on pull requests for you, with no token limitations.
 
 ## Keeping it current

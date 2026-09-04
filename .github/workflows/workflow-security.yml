@@ -6,7 +6,7 @@
 # tools check every workflow file in this repo for those mistakes:
 #
 #   - actionlint: catches workflow syntax errors and shell-script bugs inside
-#     `run:` steps before they reach main.
+#     `run:` steps before they reach local.
 #   - zizmor: a security linter for Actions. Flags template-injection holes,
 #     unpinned actions, credential persistence, and over-broad token
 #     permissions -- exactly the patterns the rest of this CI is built to avoid.
@@ -18,7 +18,7 @@ name: Workflow security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [local]
   workflow_dispatch:
 
 # Default-deny token; each job grants only read access to the code.
