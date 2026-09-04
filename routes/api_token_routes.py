@@ -63,6 +63,7 @@ TOKEN_PROFILES = {
     "codex_todos": ["todos:read", "todos:write"],
     "codex_documents": ["documents:read", "documents:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
+    "converge_bridge": ["calendar:read"],
 }
 
 
