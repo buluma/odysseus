@@ -891,6 +891,12 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
+# Converge bridge — HTTP surface for Converge's calendar-meeting timelog
+# correlation poller (SHA-172). Reuses api_token scopes (calendar:read) via
+# the converge_bridge token profile so it can only read calendar events.
+from routes.converge_calendar_routes import setup_converge_calendar_routes
+app.include_router(setup_converge_calendar_routes(calendar_router=calendar_router))
+
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
