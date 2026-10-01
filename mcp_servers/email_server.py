@@ -374,6 +374,16 @@ def _load_config(account: str | None = None) -> dict:
 # ── IMAP helpers ──
 
 
+def _normalize_mail_text(value) -> str:
+    """Normalize invisible paste separators before handing values to stdlib."""
+    return str(value or "").replace("\xa0", " ").strip()
+
+
+def _normalize_mail_password(value) -> str:
+    """Remove pasted grouping whitespace from app passwords."""
+    return re.sub(r"[\s\xa0]+", "", str(value or ""))
+
+
 def _imap_connect(account: str | None = None):
     """Connect to IMAP server, returns logged-in connection. account selects
     the mailbox (None = default)."""
@@ -403,7 +413,10 @@ def _imap_connect(account: str | None = None):
     if getattr(conn, "sock", None):
         conn.sock.settimeout(EMAIL_SOCKET_TIMEOUT)
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        conn.login(
+            _normalize_mail_text(cfg["imap_user"]),
+            _normalize_mail_password(cfg["imap_password"]),
+        )
     except Exception:
         # A failed login otherwise orphans the connected socket; close it
         # before propagating (shutdown() is the pre-auth low-level close). (#3174)
@@ -1367,7 +1380,10 @@ def _smtp_connect(account=None, cfg=None):
         )
     if cfg["smtp_user"] and cfg["smtp_password"]:
         try:
-            conn.login(cfg["smtp_user"], cfg["smtp_password"])
+            conn.login(
+                _normalize_mail_text(cfg["smtp_user"]),
+                _normalize_mail_password(cfg["smtp_password"]),
+            )
         except Exception:
             # A failed login otherwise orphans the connected socket; close it
             # before propagating (SMTP has no shutdown(); close() = socket close). (#3174)
