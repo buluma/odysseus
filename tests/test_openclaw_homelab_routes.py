@@ -1351,3 +1351,27 @@ def test_load_backup_jobs_missing_config_returns_empty(tmp_path, monkeypatch):
     monkeypatch.setattr('routes.homelab_routes._SERVICES_CONFIG_PATH', str(tmp_path / 'no_such.json'))
     from routes.homelab_routes import _load_backup_jobs
     assert _load_backup_jobs() == []
+
+
+def test_audit_log_is_written_under_data_dir_not_cwd(tmp_path):
+    """The ops audit log follows ODYSSEUS_DATA_DIR, not the process CWD."""
+    import os
+    import subprocess
+    import sys
+
+    data_dir = tmp_path / "custom-data"
+    cwd = tmp_path / "elsewhere"
+    cwd.mkdir()
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "ODYSSEUS_DATA_DIR": str(data_dir), "PYTHONPATH": repo_root}
+    subprocess.run(
+        [
+            sys.executable, "-c",
+            "import routes.openclaw_homelab_routes as m;"
+            "m._audit_write_action('restart_service', 'caddy', 'tester', True, 'ok')",
+        ],
+        env=env, cwd=str(cwd), capture_output=True, text=True, check=True,
+    )
+
+    assert (data_dir / "ops_audit.log").is_file()
+    assert not (cwd / "data").exists()

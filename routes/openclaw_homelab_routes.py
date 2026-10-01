@@ -65,6 +65,7 @@ from routes.homelab_routes import (
     _has_scope,
     _scope_owner,
 )
+from src.constants import OPS_AUDIT_LOG_FILE
 from src.event_store import EventStore
 from src.n8n_client import N8nClient
 from src.slack_notify import notify_new_event
@@ -97,7 +98,7 @@ def _safe_actions(actions: list[str]) -> list[str]:
     return [a for a in actions if a in _ALLOWED_ACTIONS]
 
 def _audit_write_action(action: str, target: str, owner: str, confirmed: bool, result: str, details: dict = None) -> None:
-    audit_file = os.path.join("data", "ops_audit.log")
+    audit_file = OPS_AUDIT_LOG_FILE
     os.makedirs(os.path.dirname(audit_file), exist_ok=True)
     import datetime
     entry = {
