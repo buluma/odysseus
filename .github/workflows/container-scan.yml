@@ -20,7 +20,7 @@ name: Container scan
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, main-v2]
   workflow_dispatch:
 
 permissions: {}

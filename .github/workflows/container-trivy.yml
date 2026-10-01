@@ -27,7 +27,7 @@ on:
       - 'assets/branding/**'
       - '.github/ISSUE_TEMPLATE/**'
   push:
-    branches: [main]
+    branches: [main, main-v2]
     paths-ignore:
       - '**.md'
       - 'docs/**'
