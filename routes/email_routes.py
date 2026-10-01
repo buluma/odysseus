@@ -49,6 +49,7 @@ from routes.email_helpers import (
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
+    _normalize_mail_text, _normalize_mail_password,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     _get_valid_google_token, _xoauth2_bytes, _xoauth2_raw,
     make_oauth_state, verify_oauth_state,
@@ -1853,6 +1854,8 @@ def setup_email_routes():
         SECURITY: `owner` is propagated so when `account_id` is missing,
         the fallback config lookup is scoped to this user's accounts only.
         """
+        folder = str(folder or "INBOX").replace("\xa0", " ").strip() or "INBOX"
+        from_addr = str(from_addr or "").replace("\xa0", " ").strip()
         conn = None
         conn_ok = False
         try:
@@ -2370,6 +2373,8 @@ def setup_email_routes():
         _deferred = getattr(_start_poller, '_deferred', None)
         if _deferred:
             await _deferred()
+        folder = str(folder or "INBOX").replace("\xa0", " ").strip() or "INBOX"
+        from_addr = str(from_addr or "").replace("\xa0", " ").strip() or None
         # SECURITY: include `owner` in the cache key so two users with
         # different account scopes don't share a cached list.
         ck = _list_cache_key(account_id, folder, filter, limit, offset, from_addr or "") + (int(bool(has_attachments)), owner)
@@ -5558,14 +5563,16 @@ def setup_email_routes():
                         continue
                     if col_name.endswith("_port"):
                         val = int(val)
+                    elif isinstance(val, str):
+                        val = _normalize_mail_text(val)
                     setattr(row, col_name, val)
             # Passwords: only update when a non-empty value is given.
             # Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc
             if data.get("imap_password"):
-                row.imap_password = _enc(data["imap_password"])
+                row.imap_password = _enc(_normalize_mail_password(data["imap_password"]))
             if data.get("smtp_password"):
-                row.smtp_password = _enc(data["smtp_password"])
+                row.smtp_password = _enc(_normalize_mail_password(data["smtp_password"]))
             clear_q = db.query(EmailAccount).filter(EmailAccount.id != row.id)
             clear_q = _email_account_owner_scope(clear_q, owner)
             clear_q.update({EmailAccount.is_default: False})
@@ -5651,7 +5658,7 @@ def setup_email_routes():
         from core.database import SessionLocal, EmailAccount
         from src.secret_storage import encrypt as _enc
         import uuid as _uuid
-        name = (data.get("name") or "").strip()
+        name = _normalize_mail_text(data.get("name") or "")
         if not name:
             return {"ok": False, "error": "name required"}
         imap_port, port_err = _coerce_port(data.get("imap_port"), 993)
@@ -5668,17 +5675,17 @@ def setup_email_routes():
                 name=name,
                 is_default=bool(data.get("is_default", False)),
                 enabled=bool(data.get("enabled", True)),
-                imap_host=(data.get("imap_host") or "").strip(),
+                imap_host=_normalize_mail_text(data.get("imap_host") or ""),
                 imap_port=imap_port,
-                imap_user=(data.get("imap_user") or "").strip(),
-                imap_password=_enc(data.get("imap_password") or ""),
+                imap_user=_normalize_mail_text(data.get("imap_user") or ""),
+                imap_password=_enc(_normalize_mail_password(data.get("imap_password") or "")),
                 imap_starttls=bool(data.get("imap_starttls", True)),
-                smtp_host=(data.get("smtp_host") or "").strip(),
+                smtp_host=_normalize_mail_text(data.get("smtp_host") or ""),
                 smtp_port=smtp_port,
                 smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": smtp_port}),
-                smtp_user=(data.get("smtp_user") or "").strip(),
-                smtp_password=_enc(data.get("smtp_password") or ""),
-                from_address=(data.get("from_address") or "").strip(),
+                smtp_user=_normalize_mail_text(data.get("smtp_user") or ""),
+                smtp_password=_enc(_normalize_mail_password(data.get("smtp_password") or "")),
+                from_address=_normalize_mail_text(data.get("from_address") or ""),
                 display_name=(data.get("display_name") or "").strip(),
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
@@ -5714,7 +5721,7 @@ def setup_email_routes():
             # Simple fields
             for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address", "display_name"):
                 if key in data:
-                    setattr(row, key, (data[key] or "").strip())
+                    setattr(row, key, _normalize_mail_text(data[key] or ""))
             for key in ("imap_port", "smtp_port"):
                 if data.get(key) not in (None, ""):
                     port, port_err = _coerce_port(data.get(key), None)
@@ -5730,9 +5737,9 @@ def setup_email_routes():
             # provided. Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc
             if data.get("imap_password"):
-                row.imap_password = _enc(data["imap_password"])
+                row.imap_password = _enc(_normalize_mail_password(data["imap_password"]))
             if data.get("smtp_password"):
-                row.smtp_password = _enc(data["smtp_password"])
+                row.smtp_password = _enc(_normalize_mail_password(data["smtp_password"]))
             db.commit()
             return {"ok": True, "id": row.id}
         finally:
@@ -5843,10 +5850,10 @@ def setup_email_routes():
         imap_result = {"ok": False}
         smtp_result = None
 
-        imap_host = (body.get("imap_host") or "").strip()
+        imap_host = _normalize_mail_text(body.get("imap_host") or "")
         imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
-        imap_user = (body.get("imap_user") or "").strip()
-        imap_pass = body.get("imap_password") or ""
+        imap_user = _normalize_mail_text(body.get("imap_user") or "")
+        imap_pass = _normalize_mail_password(body.get("imap_password") or "")
         imap_starttls = bool(body.get("imap_starttls"))
         oauth_provider = body.get("oauth_provider") or ""
 
@@ -5908,7 +5915,7 @@ def setup_email_routes():
             except Exception as e:
                 imap_result = {"ok": False, "error": _friendly_email_auth_error("IMAP", imap_host, e)}
 
-        smtp_host = (body.get("smtp_host") or "").strip()
+        smtp_host = _normalize_mail_text(body.get("smtp_host") or "")
         smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
         if smtp_host and smtp_port_err:
             smtp_result = {"ok": False, "error": smtp_port_err}
@@ -5925,8 +5932,8 @@ def setup_email_routes():
             smtp_result = {"ok": False, "error": "Google OAuth SMTP requires TLS on port 465 or STARTTLS on port 587"}
         elif smtp_host:
             smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
-            smtp_user = (body.get("smtp_user") or imap_user).strip()
-            smtp_pass = body.get("smtp_password") or imap_pass
+            smtp_user = _normalize_mail_text(body.get("smtp_user") or imap_user)
+            smtp_pass = _normalize_mail_password(body.get("smtp_password") or imap_pass)
             smtp = None
             try:
                 if smtp_security == "ssl":
