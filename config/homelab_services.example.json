@@ -1,0 +1,38 @@
+{
+  "services": [
+    {
+      "name": "pihole",
+      "display_name": "Pi-hole DNS",
+      "tier": "core",
+      "host": "192.168.1.5",
+      "container": "pihole",
+      "url": "http://192.168.1.5/admin",
+      "health_url": "http://192.168.1.5/admin/api.php",
+      "tags": ["dns", "network"],
+      "restart_allowed": false
+    },
+    {
+      "name": "plex",
+      "display_name": "Plex Media Server",
+      "tier": "media",
+      "host": "192.168.1.10",
+      "container": "plex",
+      "url": "http://192.168.1.10:32400/web",
+      "health_url": "http://192.168.1.10:32400/identity",
+      "tags": ["media", "streaming"],
+      "restart_allowed": false
+    }
+  ],
+  "backup_jobs": [
+    {
+      "name": "n8n",
+      "description": "Export n8n workflows and credentials to /backup/",
+      "script": "/opt/scripts/backup-n8n.sh"
+    },
+    {
+      "name": "database",
+      "description": "Dump app database",
+      "command": ["pg_dump", "-Fc", "app", "-f", "/backup/app.dump"]
+    }
+  ]
+}

@@ -1,0 +1,251 @@
+import pytest
+from unittest.mock import patch, MagicMock, AsyncMock
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from routes.n8n_routes import setup_n8n_routes
+from routes.openclaw_n8n_routes import setup_openclaw_n8n_routes
+from src.n8n_client import N8nClient, N8nClientError
+from src.event_store import EventStore
+
+# Mock dependencies
+@pytest.fixture
+def mock_n8n_client():
+    with patch("routes.n8n_routes.N8nClient") as mock_n8n, patch("routes.openclaw_n8n_routes.N8nClient") as mock_openclaw_n8n:
+        client = MagicMock()
+        client.configured = True
+        client.health = AsyncMock(return_value={"configured": True, "status": "ok", "http_status": 200})
+        client.list_workflows = AsyncMock(return_value=[{"id": "1", "name": "Test Workflow"}])
+        client.list_executions = AsyncMock(return_value=[
+            {
+                "id": "exec-1", 
+                "workflowId": "wf-1", 
+                "status": "error",
+                "error": {"message": "Node failed"},
+                "workflowData": {"name": "Test Workflow"}
+            }
+        ])
+        client.get_failed_executions_summary = AsyncMock(return_value={
+            "configured": True,
+            "status": "error",
+            "failed_count": 1,
+            "executions": [{"id": "exec-1", "workflowId": "wf-1", "status": "error"}]
+        })
+        
+        mock_n8n.return_value = client
+        mock_openclaw_n8n.return_value = client
+        yield client
+
+@pytest.fixture
+def real_event_store(tmp_path):
+    events_file = str(tmp_path / "test_events.json")
+    store = EventStore(file_path=events_file)
+    with patch("routes.n8n_routes.EventStore", return_value=store), patch("routes.openclaw_n8n_routes.EventStore", return_value=store):
+        yield store
+
+@pytest.fixture
+def client_with_scopes(monkeypatch):
+    def _mock_require_user(*args, **kwargs):
+        return "alice"
+        
+    monkeypatch.setattr("src.auth_helpers.require_user", _mock_require_user)
+    
+    def _make_client(scopes):
+        def _mock_scope_owner(request, allowed):
+            if not getattr(request.state, 'api_token', False):
+                return "alice"
+            token_scopes = set(getattr(request.state, 'api_token_scopes', []) or [])
+            if not token_scopes.intersection(allowed):
+                from fastapi import HTTPException
+                raise HTTPException(403, f"missing scope")
+            return "alice"
+            
+        monkeypatch.setattr("routes.n8n_routes._scope_owner", _mock_scope_owner)
+        monkeypatch.setattr("routes.openclaw_n8n_routes._scope_owner", _mock_scope_owner)
+        
+        class MockAuthMiddleware:
+            def __init__(self, app):
+                self.app = app
+            async def __call__(self, scope, receive, send):
+                if scope["type"] != "http":
+                    return await self.app(scope, receive, send)
+                scope["state"] = {"api_token": True, "api_token_scopes": scopes, "api_token_owner": "alice"}
+                return await self.app(scope, receive, send)
+        
+        # Testing FastAPI with Starlette TestClient
+        test_app = FastAPI()
+        test_app.add_middleware(MockAuthMiddleware)
+        test_app.include_router(setup_n8n_routes())
+        test_app.include_router(setup_openclaw_n8n_routes())
+        
+        return TestClient(test_app)
+        
+    return _make_client
+
+@pytest.mark.asyncio
+async def test_missing_base_url_degraded_state():
+    with patch.dict("os.environ", {"N8N_BASE_URL": ""}):
+        client = N8nClient()
+        assert client.configured is False
+        health = await client.health()
+        assert health == {"configured": False, "status": "unknown"}
+        
+        workflows = await client.list_workflows()
+        assert workflows == []
+
+@pytest.mark.asyncio
+async def test_n8n_api_failure_is_not_reported_as_zero_failures(monkeypatch):
+    class FailingResponse:
+        def raise_for_status(self):
+            raise RuntimeError("401 Unauthorized")
+
+    class FailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FailingResponse()
+
+    monkeypatch.setenv("N8N_BASE_URL", "http://n8n.local")
+    monkeypatch.setattr("src.n8n_client.httpx.AsyncClient", FailingAsyncClient)
+
+    client = N8nClient()
+    with pytest.raises(N8nClientError):
+        await client.list_executions(status="error", limit=10)
+
+    summary = await client.get_failed_executions_summary()
+    assert summary["status"] == "error"
+    assert summary["failed_count"] is None
+    assert "401 Unauthorized" in summary["error"]
+
+def test_scope_enforcement_n8n_read(client_with_scopes, mock_n8n_client):
+    c = client_with_scopes(["wrong:scope"])
+    resp = c.get("/api/n8n/health")
+    assert resp.status_code == 403
+    
+    c_valid = client_with_scopes(["n8n:read"])
+    resp = c_valid.get("/api/n8n/health")
+    assert resp.status_code == 200
+    assert resp.json()["configured"] is True
+
+def test_scope_enforcement_n8n_events(client_with_scopes, mock_n8n_client, real_event_store):
+    c = client_with_scopes(["n8n:read"]) # missing n8n:events
+    resp = c.post("/api/n8n/executions/record-events")
+    assert resp.status_code == 403
+    
+    c_valid = client_with_scopes(["n8n:events"])
+    resp = c_valid.post("/api/n8n/executions/record-events")
+    assert resp.status_code == 200
+
+def test_openclaw_n8n_health(client_with_scopes, mock_n8n_client):
+    c = client_with_scopes(["n8n:read"])
+    resp = c.get("/api/openclaw/n8n/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["overall_status"] == "ok"
+    assert "n8n is reachable and healthy" in data["message"]
+
+def test_openclaw_n8n_failures(client_with_scopes, mock_n8n_client):
+    c = client_with_scopes(["n8n:read"])
+    resp = c.get("/api/openclaw/n8n/failures")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert len(data["failures"]) == 1
+    assert data["failures"][0]["id"] == "exec-1"
+
+def test_openclaw_n8n_failures_returns_502_on_client_error(client_with_scopes, mock_n8n_client):
+    mock_n8n_client.get_failed_executions_summary = AsyncMock(return_value={
+        "configured": True,
+        "status": "error",
+        "failed_count": None,
+        "executions": [],
+        "error": "n8n list_executions failed: 401 Unauthorized",
+    })
+    c = client_with_scopes(["n8n:read"])
+    resp = c.get("/api/openclaw/n8n/failures")
+    assert resp.status_code == 502
+    assert "401 Unauthorized" in resp.text
+
+def test_openclaw_n8n_record_events(client_with_scopes, mock_n8n_client, real_event_store):
+    c = client_with_scopes(["n8n:events"])
+    resp = c.post("/api/openclaw/n8n/failures/record")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert len(data["events"]) == 1
+    
+    event = data["events"][0]
+    assert event["title"] == "n8n workflow failed"
+    assert "Test Workflow" in event["summary"]
+    assert "exec-1" in event["summary"]
+    
+    # check no destructive verbs
+    actions = event["suggested_actions"]
+    for forbidden in ["restart", "shell", "exec", "retry", "delete"]:
+        assert forbidden not in actions
+        
+    assert "ack" in actions
+    assert "investigate" in actions
+    assert "view_workflow" in actions
+
+def test_event_dedupe_key_by_workflow_id(client_with_scopes, mock_n8n_client, real_event_store):
+    c = client_with_scopes(["n8n:events"])
+    resp = c.post("/api/n8n/executions/record-events")
+    assert resp.status_code == 200
+    
+    events = real_event_store.get_events()
+    assert len(events) == 1
+    assert events[0]["dedupe_key"] == "n8n:wf-1:failed"
+    assert events[0]["source"] == "n8n"
+
+def test_event_store_custom_suggested_actions(real_event_store):
+    # Test that safe custom suggested_actions are persisted correctly
+    # and unsafe actions are stripped
+    event1 = real_event_store.record_event(
+        source="n8n",
+        service="n8n",
+        severity="warning",
+        title="test1",
+        summary="test1",
+        dedupe_key="key1",
+        suggested_actions=["view_workflow", "restart", "delete", "ack"]
+    )
+    assert "view_workflow" in event1["suggested_actions"]
+    assert "ack" in event1["suggested_actions"]
+    assert "restart" not in event1["suggested_actions"]
+    assert "delete" not in event1["suggested_actions"]
+    
+    # Test that default homelab events get standard actions
+    event2 = real_event_store.record_event(
+        source="homelab",
+        service="pihole",
+        severity="warning",
+        title="test2",
+        summary="test2",
+        dedupe_key="key2",
+    )
+    assert "ack" in event2["suggested_actions"]
+    assert "view_service" in event2["suggested_actions"]
+    assert "view_workflow" not in event2["suggested_actions"]
+
+
+def test_openclaw_n8n_rerun_requires_confirm(client_with_scopes):
+    c = client_with_scopes(["n8n:write"])
+    resp = c.post("/api/openclaw/n8n/ops/n8n-rerun", json={"workflow": "wf-1", "confirm": False})
+    assert resp.status_code == 400
+    assert "confirm=true" in resp.json()["detail"]
+
+
+def test_openclaw_n8n_rerun_requires_allowlist(client_with_scopes, mock_n8n_client, monkeypatch):
+    monkeypatch.delenv("N8N_WORKFLOW_ALLOWLIST", raising=False)
+    c = client_with_scopes(["n8n:write"])
+    resp = c.post("/api/openclaw/n8n/ops/n8n-rerun", json={"workflow": "wf-1", "confirm": True})
+    assert resp.status_code == 403
+    assert "N8N_WORKFLOW_ALLOWLIST" in resp.json()["detail"]

@@ -1,0 +1,1494 @@
+"""OpenClaw homelab command-facing routes (Phase 3: read/incident-state only).
+
+Provides a compact Slack-friendly JSON layer over the homelab health checks
+and event lifecycle.  No restart actions, no shell execution.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import logging
+import json
+import http.client
+import os
+import re
+import socket
+import subprocess
+import urllib.parse
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+class DockerRestartRequest(BaseModel):
+    container: str
+    confirm: bool = False
+
+class IncidentRestartRequest(BaseModel):
+    confirm: bool = False
+
+class BackupJobRequest(BaseModel):
+    confirm: bool = False
+
+class RedmineTicketRequest(BaseModel):
+    confirm: bool = False
+
+class HomelabAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+
+class IncidentAlertRequest(BaseModel):
+    source: str = "external_alert"
+    service: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    severity: str = "critical"
+    container: str | None = None
+    dedupe_key: str | None = None
+    labels: dict[str, Any] = Field(default_factory=dict)
+    annotations: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    common_labels: dict[str, Any] = Field(default_factory=dict, alias="commonLabels")
+    common_annotations: dict[str, Any] = Field(default_factory=dict, alias="commonAnnotations")
+    alerts: list[dict[str, Any]] = Field(default_factory=list)
+    status: str | None = None
+    receiver: str | None = None
+
+from routes.homelab_routes import (
+    HOMELAB_READ_SCOPES,
+    HOMELAB_WRITE_SCOPES,
+    EVENTS_WRITE_SCOPES,
+    _load_services,
+    _load_backup_jobs,
+    execute_health_checks,
+    _has_scope,
+    _scope_owner,
+)
+from src.event_store import EventStore
+from src.n8n_client import N8nClient
+from src.slack_notify import notify_new_event
+from src.llm_core import llm_call_async
+from src.endpoint_resolver import resolve_endpoint
+from core.database import SessionLocal, ScheduledTask, TaskRun
+
+logger = logging.getLogger(__name__)
+
+EVENTS_READ_SCOPES = {'events:read'}
+EVENTS_ACK_SCOPES = {'events:ack'}
+EVENTS_RESOLVE_SCOPES = {'events:resolve'}
+
+# Actions that may appear in OpenClaw responses.
+_ALLOWED_ACTIONS = {
+    'ack', 'investigate', 'resolve', 'ignore', 'view_service',
+    'view_workflow', 'view_execution', 'record_event', 'diagnose',
+    'restart_service',
+}
+
+BASE_URL = '/api/openclaw/homelab'
+PING_TARGET = os.getenv('HEIMDAL_PING_TARGET', '100.110.136.4')
+CADDY_CONTAINER = os.getenv('CADDY_CONTAINER', 'caddy')
+DOCKER_SOCKET = os.getenv('HOMELAB_DOCKER_SOCKET', '/var/run/docker.sock')
+TAILSCALE_SOCKET = os.getenv('HOMELAB_TAILSCALE_SOCKET', '/var/run/tailscale/tailscaled.sock')
+
+
+def _safe_actions(actions: list[str]) -> list[str]:
+    """Filter to only allowed actions before returning to OpenClaw."""
+    return [a for a in actions if a in _ALLOWED_ACTIONS]
+
+def _audit_write_action(action: str, target: str, owner: str, confirmed: bool, result: str, details: dict = None) -> None:
+    audit_file = os.path.join("data", "ops_audit.log")
+    os.makedirs(os.path.dirname(audit_file), exist_ok=True)
+    import datetime
+    entry = {
+        "action": action,
+        "target": target,
+        "requested_by": owner,
+        "confirmed": confirmed,
+        "result": result,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    if details:
+        entry["details"] = details
+    try:
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.error(f"Audit log write failed: {exc}")
+
+def _sanitize_dict(data: dict) -> dict:
+    """Recursively redact sensitive keys from a dictionary."""
+    redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
+    clean = {}
+    for k, v in data.items():
+        # Normalize camelCase to snake_case before sensitive-key matching.
+        k_norm = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', k).lower()
+        if any(re.search(rf'(^|[-_]){re.escape(rk)}s?([-_]|$)', k_norm) for rk in redact_keys):
+            clean[k] = '***REDACTED***'
+        elif isinstance(v, dict):
+            clean[k] = _sanitize_dict(v)
+        elif isinstance(v, list):
+            clean[k] = [_sanitize_dict(i) if isinstance(i, dict) else i for i in v]
+        else:
+            clean[k] = v
+    return clean
+
+def _sanitize_service(service: dict) -> dict:
+    """Return a new dict with sensitive fields redacted."""
+    return _sanitize_dict(service)
+
+
+def _run_static_command(args: list[str], timeout: int = 8) -> dict[str, Any]:
+    """Run a fixed argv command and return a redacted diagnostic envelope."""
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return {'status': 'degraded', 'error': 'command_not_available', 'command': args[0]}
+    except subprocess.TimeoutExpired:
+        return {'status': 'degraded', 'error': 'command_timeout', 'command': args[0]}
+    except Exception as exc:
+        return {'status': 'degraded', 'error': str(exc), 'command': args[0]}
+
+    stdout = (result.stdout or '').strip()
+    stderr = (result.stderr or '').strip()
+    return {
+        'status': 'ok' if result.returncode == 0 else 'degraded',
+        'returncode': result.returncode,
+        'stdout': stdout[:12000],
+        'stderr': stderr[:4000],
+    }
+
+
+def _json_lines(text: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except Exception:
+            rows.append({'raw': line})
+            continue
+        if isinstance(value, dict):
+            rows.append(_sanitize_dict(value))
+    return rows
+
+
+def _find_grafana_url() -> str | None:
+    configured = (os.getenv('HOMELAB_GRAFANA_URL') or os.getenv('GRAFANA_URL') or '').strip()
+    if configured:
+        return configured
+    for service in _load_services():
+        if str(service.get('name') or '').lower() == 'grafana':
+            return service.get('health_url') or service.get('url')
+    return None
+
+
+class _UnixSocketHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, timeout: int = 8):
+        super().__init__('localhost', timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self.socket_path)
+        self.sock = sock
+
+
+def _docker_api_request(path: str, timeout: int = 8, method: str = 'GET') -> dict[str, Any]:
+    if not os.path.exists(DOCKER_SOCKET):
+        return {'status': 'degraded', 'error': 'docker_socket_not_available'}
+    conn = _UnixSocketHTTPConnection(DOCKER_SOCKET, timeout=timeout)
+    try:
+        conn.request(method, path)
+        resp = conn.getresponse()
+        raw = resp.read()
+        text = raw.decode('utf-8', errors='replace')
+        return {
+            'status': 'ok' if resp.status < 400 else 'degraded',
+            'http_status': resp.status,
+            'body': text,
+        }
+    except PermissionError:
+        return {'status': 'degraded', 'error': 'docker_socket_permission_denied'}
+    except Exception as exc:
+        return {'status': 'degraded', 'error': str(exc)}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _restartable_container(container: str) -> dict[str, Any] | None:
+    for service in _load_services():
+        if service.get('container') == container and service.get('restart_allowed') is True:
+            return service
+    return None
+
+
+def _service_by_name(name: str | None) -> dict[str, Any] | None:
+    if not name:
+        return None
+    target = str(name).lower()
+    for service in _load_services():
+        if str(service.get('name') or '').lower() == target:
+            return service
+    return None
+
+
+def _registered_container(container: str | None) -> dict[str, Any] | None:
+    if not container:
+        return None
+    for service in _load_services():
+        if service.get('container') == container:
+            return service
+    return None
+
+
+def _event_container(event: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    service = _service_by_name(event.get('service'))
+    if service and service.get('container'):
+        return service.get('container'), service
+    metadata = event.get('metadata') if isinstance(event.get('metadata'), dict) else {}
+    service = _registered_container(metadata.get('container'))
+    if service:
+        return service.get('container'), service
+    return None, service
+
+
+def _docker_unhealthy_containers() -> dict[str, Any]:
+    filters = urllib.parse.quote(json.dumps({'health': ['unhealthy']}))
+    result = _docker_api_request(f'/containers/json?filters={filters}')
+    containers = []
+    if result.get('status') == 'ok':
+        try:
+            payload = json.loads(result.get('body') or '[]')
+        except Exception:
+            payload = []
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    containers.append(_sanitize_dict({
+                        'ID': item.get('Id'),
+                        'Names': ', '.join([str(name).lstrip('/') for name in item.get('Names', [])]),
+                        'Image': item.get('Image'),
+                        'Status': item.get('Status'),
+                        'State': item.get('State'),
+                    }))
+    return {'containers': containers, 'check': result}
+
+
+def _docker_container_logs(container: str, lines: int) -> dict[str, Any]:
+    safe_container = urllib.parse.quote(container, safe='')
+    result = _docker_api_request(
+        f'/containers/{safe_container}/logs?stdout=1&stderr=1&tail={lines}',
+        timeout=10,
+    )
+    logs = re.sub(r'[\x00-\x08\x0b-\x1f]', '', result.get('body') or '')
+    check = {k: v for k, v in result.items() if k != 'body'}
+    return {'logs': logs[-12000:], 'check': check}
+
+
+def _docker_container_inspect(container: str) -> dict[str, Any]:
+    safe_container = urllib.parse.quote(container, safe='')
+    result = _docker_api_request(f'/containers/{safe_container}/json', timeout=8)
+    check = {k: v for k, v in result.items() if k != 'body'}
+    if result.get('status') != 'ok':
+        return {'status': 'degraded', 'check': check}
+    try:
+        payload = json.loads(result.get('body') or '{}')
+    except Exception:
+        return {'status': 'degraded', 'check': check | {'error': 'invalid_json'}}
+    state = payload.get('State') if isinstance(payload.get('State'), dict) else {}
+    health = state.get('Health') if isinstance(state.get('Health'), dict) else {}
+    return {
+        'status': 'ok',
+        'container': container,
+        'state': {
+            'status': state.get('Status'),
+            'running': state.get('Running'),
+            'restarting': state.get('Restarting'),
+            'exit_code': state.get('ExitCode'),
+            'error': state.get('Error'),
+            'started_at': state.get('StartedAt'),
+            'finished_at': state.get('FinishedAt'),
+            'health': health.get('Status'),
+        },
+        'restart_count': payload.get('RestartCount'),
+        'image': payload.get('Config', {}).get('Image') if isinstance(payload.get('Config'), dict) else None,
+        'check': check,
+    }
+
+
+async def _caddy_route_probe(service: dict[str, Any] | None) -> dict[str, Any]:
+    if not service:
+        return {'status': 'unknown', 'message': 'No registry service matched this event.'}
+    url = service.get('url') or service.get('health_url')
+    host = urllib.parse.urlparse(url).hostname if url else None
+    if not host:
+        return {'status': 'unknown', 'message': 'Service has no URL host to match against Caddy.'}
+    caddy_url = os.getenv('HOMELAB_CADDY_CONFIG_URL', f'http://{CADDY_CONTAINER}:2019/config/')
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(caddy_url)
+        if resp.status_code >= 400:
+            return {'status': 'degraded', 'host': host, 'http_status': resp.status_code}
+        text = resp.text
+        matched = host in text
+        return {
+            'status': 'ok' if matched else 'degraded',
+            'host': host,
+            'matched': matched,
+            'http_status': resp.status_code,
+        }
+    except Exception as exc:
+        return {'status': 'degraded', 'host': host, 'error': str(exc)}
+
+
+def _compact_tailscale_status(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    self_node = payload.get('Self') if isinstance(payload.get('Self'), dict) else {}
+    peers = []
+    for peer in (payload.get('Peer') or {}).values():
+        if not isinstance(peer, dict):
+            continue
+        peers.append({
+            'host_name': peer.get('HostName'),
+            'dns_name': peer.get('DNSName'),
+            'os': peer.get('OS'),
+            'tailscale_ips': peer.get('TailscaleIPs') or [],
+            'online': bool(peer.get('Online')),
+            'active': bool(peer.get('Active')),
+            'last_seen': peer.get('LastSeen'),
+        })
+    peers.sort(key=lambda item: (not item.get('online'), str(item.get('host_name') or item.get('dns_name') or '')))
+    return {
+        'version': payload.get('Version'),
+        'backend_state': payload.get('BackendState'),
+        'tailscale_ips': payload.get('TailscaleIPs') or [],
+        'self': {
+            'host_name': self_node.get('HostName'),
+            'dns_name': self_node.get('DNSName'),
+            'os': self_node.get('OS'),
+            'tailscale_ips': self_node.get('TailscaleIPs') or [],
+            'online': bool(self_node.get('Online')),
+        },
+        'health': payload.get('Health') or [],
+        'peer_count': len(peers),
+        'peers': peers,
+    }
+
+
+def _tailscale_status() -> dict[str, Any]:
+    if os.path.exists(TAILSCALE_SOCKET):
+        conn = _UnixSocketHTTPConnection(TAILSCALE_SOCKET, timeout=8)
+        try:
+            conn.request('GET', '/localapi/v0/status', headers={'Host': 'local-tailscaled.sock'})
+            resp = conn.getresponse()
+            text = resp.read().decode('utf-8', errors='replace')
+            payload = json.loads(text) if resp.status < 400 else None
+            compact = _compact_tailscale_status(payload)
+            return {
+                'status': 'ok' if resp.status < 400 else 'degraded',
+                'http_status': resp.status,
+                'tailscale': compact,
+                'check': {'status': 'ok' if resp.status < 400 else 'degraded', 'http_status': resp.status},
+            }
+        except Exception as exc:
+            return {'status': 'degraded', 'error': str(exc), 'tailscale': None, 'check': {'status': 'degraded', 'error': str(exc)}}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    result = _run_static_command(['tailscale', 'status', '--json'])
+    status_json = None
+    if result.get('status') == 'ok' and result.get('stdout'):
+        try:
+            status_json = _compact_tailscale_status(json.loads(result['stdout']))
+        except Exception:
+            status_json = None
+    return {'status': result.get('status'), 'tailscale': status_json, 'check': result}
+
+
+def _event_links(event_id: str) -> dict[str, str]:
+    """Return canonical self/collection links for an event."""
+    return {
+        'self': f'{BASE_URL}/events/{event_id}',
+        'events': f'{BASE_URL}/events',
+        'ack': f'{BASE_URL}/events/{event_id}/ack',
+        'investigate': f'{BASE_URL}/events/{event_id}/investigate',
+        'resolve': f'{BASE_URL}/events/{event_id}/resolve',
+        'ignore': f'{BASE_URL}/events/{event_id}/ignore',
+        'diagnose': f'{BASE_URL}/incidents/{event_id}/diagnose',
+        'restart': f'{BASE_URL}/incidents/{event_id}/restart',
+    }
+
+
+def _compact_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a Slack-friendly subset of an event dict."""
+    return {
+        'id': event['id'],
+        'service': event.get('service'),
+        'severity': event.get('severity'),
+        'status': event.get('status'),
+        'title': event.get('title'),
+        'summary': event.get('summary'),
+        'count': event.get('count', 1),
+        'first_seen': event.get('first_seen'),
+        'last_seen': event.get('last_seen'),
+        'owner': event.get('owner'),
+        'suggested_actions': _safe_actions(event.get('suggested_actions', [])),
+        'links': _event_links(event['id']),
+    }
+
+
+def _ok(*, message: str, event: dict | None = None, events: list | None = None,
+        requires_approval: bool = False) -> dict[str, Any]:
+    """Build a successful OpenClaw response envelope."""
+    payload: dict[str, Any] = {
+        'status': 'ok',
+        'message': message,
+        'requires_approval': requires_approval,
+    }
+    if event is not None:
+        payload['event'] = event
+    if events is not None:
+        payload['events'] = events
+    return payload
+
+
+def _ops_result(kind: str, message: str, detail: dict[str, Any]) -> dict[str, Any]:
+    return _ok(message=message) | {
+        'ops': {
+            'kind': kind,
+            **detail,
+        },
+        'links': {'health': f'{BASE_URL}/health'},
+    }
+
+
+def _alert_text(body: IncidentAlertRequest, service: str) -> tuple[str, str]:
+    annotations = body.annotations or body.common_annotations or {}
+    labels = body.labels or body.common_labels or {}
+    title = (body.title or annotations.get('summary') or labels.get('alertname') or f'{service} alert')
+    summary = (
+        body.summary
+        or annotations.get('description')
+        or annotations.get('message')
+        or body.metadata.get('message')
+        or title
+    )
+    return str(title)[:240], str(summary)[:2000]
+
+
+def _alert_service(body: IncidentAlertRequest) -> str:
+    labels = body.labels or body.common_labels or {}
+    if not labels and body.alerts:
+        first = body.alerts[0]
+        if isinstance(first, dict) and isinstance(first.get('labels'), dict):
+            labels = first['labels']
+    value = (
+        body.service
+        or labels.get('service')
+        or labels.get('container')
+        or labels.get('container_label_com_docker_compose_service')
+        or labels.get('job')
+        or labels.get('instance')
+        or 'unknown'
+    )
+    service = re.sub(r'[^A-Za-z0-9_.:@-]+', '-', str(value)).strip('-')
+    return service[:96] or 'unknown'
+
+
+async def _diagnose_event(event: dict[str, Any]) -> dict[str, Any]:
+    container, service = _event_container(event)
+    logs = None
+    docker = None
+    restart = {'eligible': False, 'reason': 'no registered restart allowlist match'}
+    if container:
+        logs = _docker_container_logs(container, 120)
+        docker = _docker_container_inspect(container)
+        restart_service = _restartable_container(container)
+        if restart_service:
+            restart = {
+                'eligible': True,
+                'container': container,
+                'service': restart_service.get('name'),
+                'requires_confirmation': True,
+                'command': f'restart service {restart_service.get("name")}',
+                'link': f'{BASE_URL}/incidents/{event["id"]}/restart',
+            }
+    caddy = await _caddy_route_probe(service)
+    findings = []
+    if docker:
+        state = docker.get('state') or {}
+        health = state.get('health')
+        status = state.get('status')
+        if status and status != 'running':
+            findings.append(f'Container state is {status}.')
+        elif health and health != 'healthy':
+            findings.append(f'Container health is {health}.')
+        elif docker.get('status') == 'ok':
+            findings.append('Docker reports the container is running.')
+        else:
+            findings.append('Docker inspection is degraded.')
+    else:
+        findings.append('No registered container found for this incident.')
+    if caddy.get('matched') is False:
+        findings.append(f"Caddy config did not show a route for {caddy.get('host')}.")
+    elif caddy.get('matched') is True:
+        findings.append(f"Caddy config includes {caddy.get('host')}.")
+    elif caddy.get('status') == 'degraded':
+        findings.append('Caddy route check is degraded.')
+    if logs and logs.get('logs'):
+        tail = logs['logs'].strip().splitlines()[-3:]
+        if tail:
+            findings.append('Recent logs: ' + ' | '.join(line[:160] for line in tail))
+    summary = ' '.join(findings)[:1200]
+    return {
+        'event': _compact_event(event),
+        'container': container,
+        'service': _sanitize_service(service) if service else None,
+        'docker': docker,
+        'caddy': caddy,
+        'logs': logs,
+        'restart': restart,
+        'summary': summary,
+    }
+
+
+_TMPFS_TYPES = {'tmpfs', 'devtmpfs', 'overlay', 'shm', 'udev', 'cgroupfs', 'cgroup', 'proc', 'sysfs', 'devpts'}
+_DISK_HIGH_THRESHOLD = 80
+
+
+def _disk_usage_summary() -> dict[str, Any]:
+    result = _run_static_command(['df', '-h'], timeout=8)
+    if result.get('status') != 'ok':
+        return {'status': 'degraded', 'filesystems': [], 'high_usage': [], 'error': result.get('error') or result.get('stderr')}
+    filesystems = []
+    for line in (result.get('stdout') or '').splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        fs, size, used, avail, use_pct, mount = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+        if any(fs.startswith(t) or fs == t for t in _TMPFS_TYPES):
+            continue
+        if mount.startswith('/dev') or mount in ('/sys', '/proc', '/run'):
+            continue
+        try:
+            pct = int(use_pct.rstrip('%'))
+        except ValueError:
+            pct = 0
+        filesystems.append({'filesystem': fs, 'size': size, 'used': used, 'avail': avail, 'use_percent': pct, 'mount': mount})
+    high_usage = [fs for fs in filesystems if fs['use_percent'] >= _DISK_HIGH_THRESHOLD]
+    return {'status': 'ok', 'filesystems': filesystems, 'high_usage': high_usage}
+
+
+def _failed_cron_jobs(owner: str, hours: int = 24) -> list[dict[str, Any]]:
+    cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(hours=hours)
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(TaskRun, ScheduledTask)
+            .join(ScheduledTask, TaskRun.task_id == ScheduledTask.id)
+            .filter(ScheduledTask.owner == owner)
+            .filter(TaskRun.status == 'error')
+            .filter(TaskRun.started_at >= cutoff)
+            .order_by(TaskRun.started_at.desc())
+            .limit(20)
+            .all()
+        )
+        return [
+            {
+                'task_name': task.name,
+                'task_id': task.id,
+                'run_id': run.id,
+                'started_at': run.started_at.isoformat() if run.started_at else None,
+                'error': (run.error or '')[:400],
+            }
+            for run, task in rows
+        ]
+    except Exception as exc:
+        logger.error('Failed to query cron job failures: %s', exc)
+        return []
+    finally:
+        db.close()
+
+
+async def _redmine_tickets_needing_action(owner: str) -> dict[str, Any]:
+    base_url = (os.getenv('CONVERGE_BASE_URL') or '').strip().rstrip('/')
+    api_key = (os.getenv('CONVERGE_API_KEY') or '').strip()
+    if not base_url or not api_key:
+        return {'configured': False, 'needing_action_count': 0, 'tickets': []}
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                f'{base_url}/api/external/tickets',
+                headers={'X-API-Key': api_key},
+                params={'status': 'open', 'limit': 10},
+            )
+        if resp.status_code >= 400:
+            return {'configured': True, 'needing_action_count': 0, 'tickets': [], 'error': f'HTTP {resp.status_code}'}
+        data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+        tickets = data.get('tickets', []) if isinstance(data, dict) else []
+        actionable = [
+            {'id': t.get('id') or t.get('redmine_id'), 'subject': str(t.get('subject') or '')[:200], 'status': t.get('status_name') or t.get('status')}
+            for t in tickets if isinstance(t, dict)
+        ]
+        return {'configured': True, 'needing_action_count': len(actionable), 'tickets': actionable}
+    except Exception as exc:
+        return {'configured': True, 'needing_action_count': 0, 'tickets': [], 'error': str(exc)[:200]}
+
+
+def _netbox_sync_status() -> dict[str, Any]:
+    result = _run_static_command(['netbox-sync', '--status'], timeout=15)
+    return {
+        'status': result.get('status', 'degraded'),
+        'output': ((result.get('stdout') or '') + (result.get('stderr') or ''))[:1000],
+    }
+
+
+def setup_openclaw_homelab_routes() -> APIRouter:
+    """Create and return the /api/openclaw/homelab router."""
+    router = APIRouter(prefix=BASE_URL, tags=['openclaw-homelab'])
+
+    # ------------------------------------------------------------------
+    # Health routes
+    # ------------------------------------------------------------------
+
+    @router.get('/health')
+    async def openclaw_homelab_health(request: Request) -> dict[str, Any]:
+        """Return homelab health in compact Slack-friendly format.
+
+        Requires: homelab:read
+        """
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+        services = _load_services()
+        results, _, overall = await execute_health_checks(
+            services, record_events=False, owner=owner, source_name='openclaw_health'
+        )
+
+        unhealthy = [r['name'] for r in results if r.get('status') != 'ok']
+        if unhealthy:
+            msg = f"{len(unhealthy)} service(s) unhealthy: {', '.join(unhealthy)}"
+        else:
+            msg = f"All {len(results)} service(s) healthy."
+
+        return _ok(
+            message=msg,
+            events=None,
+            event=None,
+        ) | {
+            'overall_status': overall,
+            'services': results,
+            'links': {'health': f'{BASE_URL}/health', 'events': f'{BASE_URL}/events'},
+        }
+
+    @router.post('/health/record')
+    async def openclaw_homelab_health_record(request: Request) -> dict[str, Any]:
+        """Run health checks and record failures as durable events.
+
+        Requires: homelab:read + events:write
+        """
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+        if not _has_scope(request, EVENTS_WRITE_SCOPES):
+            raise HTTPException(403, 'API token missing required scope: events:write')
+
+        services = _load_services()
+        results, raw_events, overall = await execute_health_checks(
+            services, record_events=True, owner=owner, source_name='openclaw_health'
+        )
+        recorded = [_compact_event(e) for e in raw_events]
+
+        msg = (
+            f"{len(recorded)} event(s) recorded from {len(results)} service(s)."
+            if recorded else
+            f"All {len(results)} service(s) healthy — no events recorded."
+        )
+
+        return _ok(message=msg, events=recorded) | {
+            'overall_status': overall,
+            'services': results,
+            'links': {'health': f'{BASE_URL}/health', 'events': f'{BASE_URL}/events'},
+        }
+
+    @router.get('/ops/daily-brief')
+    async def openclaw_daily_brief(request: Request) -> dict[str, Any]:
+        """Aggregate daily ops briefing. Requires: homelab:read."""
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+
+        from routes.openclaw_inbox_routes import _triage_state
+        inbox_state = _triage_state(owner)
+
+        store = EventStore()
+        events = store.get_events(status='open')
+
+        from src.n8n_client import N8nClient
+        n8n_client = N8nClient()
+        n8n_summary = {}
+        if n8n_client.configured:
+            n8n_summary = await n8n_client.get_failed_executions_summary()
+
+        services = _load_services()
+        results, _, overall = await execute_health_checks(
+            services, record_events=False, owner=owner, source_name='openclaw_health'
+        )
+
+        cron_failures = _failed_cron_jobs(owner)
+        disk = _disk_usage_summary()
+        redmine = await _redmine_tickets_needing_action(owner)
+        netbox = _netbox_sync_status()
+
+        brief = {
+            'inbox': {
+                'total_unread': inbox_state.get('total_unread', 0),
+                'total_urgent': inbox_state.get('total_urgent', 0),
+            },
+            'events': {
+                'open_count': len(events),
+                'critical': sum(1 for e in events if e.get('severity') == 'critical'),
+            },
+            'n8n': {
+                'failed_count': n8n_summary.get('failed_count', 0),
+                'configured': n8n_client.configured,
+            },
+            'health': {
+                'overall_status': overall,
+                'unhealthy_count': sum(1 for r in results if r.get('status') != 'ok'),
+            },
+            'cron_jobs': {
+                'failed_count': len(cron_failures),
+                'recent_failures': cron_failures,
+            },
+            'disk': disk,
+            'redmine': redmine,
+            'netbox': netbox,
+        }
+
+        return _ops_result('daily_brief', "Daily briefing aggregated successfully.", brief)
+
+    @router.post('/ask')
+    async def openclaw_homelab_ask(request: Request, body: HomelabAskRequest) -> dict[str, Any]:
+        """Answer a natural-language question about the homelab using a live snapshot as context.
+
+        Gathers health, disk, tailscale, open events, and n8n data in parallel,
+        injects them into an LLM system prompt, and returns the synthesised answer.
+        Requires: homelab:read
+        """
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+
+        # Resolve LLM endpoint before doing expensive I/O so we fail fast.
+        try:
+            ep_url, ep_model, ep_headers = resolve_endpoint('utility', owner=owner)
+        except Exception:
+            try:
+                ep_url, ep_model, ep_headers = resolve_endpoint('default', owner=owner)
+            except Exception as exc:
+                raise HTTPException(503, f"No model endpoint configured: {exc}")
+
+        # Gather snapshot in parallel.
+        services = _load_services()
+        n8n_client = N8nClient()
+
+        async def _n8n_summary():
+            if not n8n_client.configured:
+                return {}
+            return await n8n_client.get_failed_executions_summary()
+
+        health_task = asyncio.ensure_future(
+            execute_health_checks(services, record_events=False, owner=owner, source_name='homelab_ask')
+        )
+        n8n_task = asyncio.ensure_future(_n8n_summary())
+
+        health_results, _, overall = await health_task
+        n8n_summary = await n8n_task
+
+        disk = _disk_usage_summary()
+        tailscale = _tailscale_status()
+        store = EventStore()
+        open_events = store.get_events(status='open')
+
+        # Build compact context block for the system prompt.
+        unhealthy = [r for r in health_results if r.get('status') != 'ok']
+        disk_lines = [
+            f"  {fs['mount']}: {fs['use_percent']}% used, {fs['avail']} free"
+            for fs in disk.get('filesystems', [])
+        ]
+        event_lines = [
+            f"  [{e.get('severity','?')}] {e.get('title','?')}"
+            for e in open_events[:10]
+        ]
+        n8n_failed = n8n_summary.get('failed_count') or 0
+
+        context = "\n".join([
+            "=== HOMELAB SNAPSHOT ===",
+            f"Service health: {overall} ({len(unhealthy)} unhealthy of {len(health_results)})",
+        ] + (
+            [f"  Unhealthy: {', '.join(r['name'] for r in unhealthy)}"] if unhealthy else []
+        ) + [
+            "",
+            "Disk:",
+        ] + (disk_lines or ["  (unavailable)"]) + [
+            "",
+            f"Tailscale: {tailscale.get('status','?')} — {(tailscale.get('tailscale') or {}).get('peer_count', '?')} peer(s)",
+            "",
+            f"Open events ({len(open_events)}):",
+        ] + (event_lines or ["  (none)"]) + [
+            "",
+            f"n8n: {n8n_failed} failed workflow execution(s)." if n8n_client.configured else "n8n: not configured.",
+            "=== END SNAPSHOT ===",
+        ])
+
+        system_prompt = (
+            "You are a homelab operations assistant with read-only access to live system data. "
+            "Answer the user's question concisely using only the snapshot below. "
+            "If the data does not contain enough information to answer, say so.\n\n"
+            + context
+        )
+
+        answer = await llm_call_async(
+            ep_url,
+            ep_model,
+            [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': body.question},
+            ],
+            headers=ep_headers,
+            prompt_type='homelab_ask',
+        )
+
+        return {
+            'status': 'ok',
+            'question': body.question,
+            'answer': answer,
+        }
+
+    # ------------------------------------------------------------------
+    # Service read routes
+    # ------------------------------------------------------------------
+
+    @router.get('/services')
+    async def openclaw_list_services(request: Request) -> dict[str, Any]:
+        """List homelab services in compact format.
+
+        Requires: homelab:read
+        """
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        services = [_sanitize_service(srv) for srv in _load_services()]
+        msg = f"{len(services)} service(s) returned." if services else 'No services found.'
+        return _ok(message=msg, events=None) | {
+            'services': services,
+            'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
+        }
+
+    @router.get('/services/{name}')
+    async def openclaw_get_service(request: Request, name: str) -> dict[str, Any]:
+        """Get a specific homelab service by name.
+
+        Requires: homelab:read
+        """
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        services = _load_services()
+        for srv in services:
+            if srv.get('name') == name:
+                return _ok(message=f"Service {name}.", event=None) | {
+                    'service': _sanitize_service(srv),
+                    'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
+                }
+        raise HTTPException(404, 'Service not found')
+
+    # ------------------------------------------------------------------
+    # Safe read-only ops commands
+    # ------------------------------------------------------------------
+
+    @router.get('/ops/docker-unhealthy')
+    async def openclaw_docker_unhealthy(request: Request) -> dict[str, Any]:
+        """Return unhealthy Docker containers only. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        data = _docker_unhealthy_containers()
+        result = data['check']
+        containers = data['containers']
+        message = (
+            f"{len(containers)} unhealthy Docker container(s)."
+            if result.get('status') == 'ok' else
+            f"Docker unhealthy check degraded: {result.get('error') or result.get('body') or 'unknown error'}"
+        )
+        return _ops_result('docker_unhealthy', message, {'containers': containers, 'check': result})
+
+    @router.get('/ops/tailscale-status')
+    async def openclaw_tailscale_status(request: Request) -> dict[str, Any]:
+        """Return Tailscale status. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        data = _tailscale_status()
+        result = data['check']
+        status_json = data.get('tailscale')
+        peer_count = int(status_json.get('peer_count') or 0) if isinstance(status_json, dict) else 0
+        message = (
+            f"Tailscale status returned {peer_count} peer(s)."
+            if data.get('status') == 'ok' else
+            f"Tailscale status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('tailscale_status', message, {'tailscale': status_json, 'check': result})
+
+    @router.get('/ops/ping-heimdal')
+    async def openclaw_ping_heimdal(request: Request) -> dict[str, Any]:
+        """Ping the configured Heimdal target. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['ping', '-c', '3', PING_TARGET], timeout=10)
+        message = (
+            f"Heimdal ping OK: {PING_TARGET}."
+            if result.get('status') == 'ok' else
+            f"Heimdal ping degraded: {PING_TARGET}."
+        )
+        return _ops_result('ping_heimdal', message, {'target': PING_TARGET, 'check': result})
+
+    @router.get('/ops/grafana')
+    async def openclaw_check_grafana(request: Request) -> dict[str, Any]:
+        """Check configured Grafana health URL. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        url = _find_grafana_url()
+        if not url:
+            return _ops_result('grafana', 'Grafana health URL is not configured.', {'status': 'degraded'})
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(url)
+            status = 'ok' if resp.status_code < 400 else 'degraded'
+            message = f"Grafana returned HTTP {resp.status_code}."
+            return _ops_result('grafana', message, {
+                'status': status,
+                'url': url,
+                'http_status': resp.status_code,
+                'body': resp.text[:1000],
+            })
+        except Exception as exc:
+            return _ops_result('grafana', f"Grafana check degraded: {exc}", {
+                'status': 'degraded',
+                'url': url,
+                'error': str(exc),
+            })
+
+    @router.get('/ops/caddy-logs')
+    async def openclaw_tail_caddy_logs(request: Request, lines: int = 80) -> dict[str, Any]:
+        """Tail recent Caddy container logs. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        if not (1 <= lines <= 200):
+            raise HTTPException(400, 'lines must be between 1 and 200')
+        data = _docker_container_logs(CADDY_CONTAINER, lines)
+        result = data['check']
+        message = (
+            f"Caddy logs returned last {lines} line(s)."
+            if result.get('status') == 'ok' else
+            f"Caddy log check degraded: {result.get('error') or result.get('body') or 'unknown error'}"
+        )
+        return _ops_result('caddy_logs', message, {
+            'container': CADDY_CONTAINER,
+            'lines': lines,
+            'logs': data['logs'],
+            'check': result,
+        })
+
+    @router.get('/ops/disk-usage')
+    async def openclaw_disk_usage(request: Request) -> dict[str, Any]:
+        """Return filesystem usage. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['df', '-h'], timeout=8)
+        message = (
+            "Disk usage returned."
+            if result.get('status') == 'ok' else
+            f"Disk usage check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('disk_usage', message, {'table': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/memory-usage')
+    async def openclaw_memory_usage(request: Request) -> dict[str, Any]:
+        """Return memory usage. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['free', '-h'], timeout=8)
+        message = (
+            "Memory usage returned."
+            if result.get('status') == 'ok' else
+            f"Memory usage check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('memory_usage', message, {'table': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/dns-check')
+    async def openclaw_dns_check(request: Request, domain: str) -> dict[str, Any]:
+        """Check DNS resolution for a domain. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        try:
+            hostname, aliases, ips = socket.gethostbyname_ex(domain)
+            result = {'status': 'ok', 'hostname': hostname, 'aliases': aliases, 'ips': ips}
+            message = f"DNS check for {domain} resolved to {len(ips)} IP(s)."
+        except Exception as exc:
+            result = {'status': 'degraded', 'error': str(exc)}
+            message = f"DNS check for {domain} degraded: {exc}"
+        return _ops_result('dns_check', message, {'domain': domain, 'check': result})
+
+    @router.get('/ops/caddy-routes')
+    async def openclaw_caddy_routes(request: Request) -> dict[str, Any]:
+        """Check Caddy configured routes. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        caddy_url = os.getenv('HOMELAB_CADDY_CONFIG_URL', f'http://{CADDY_CONTAINER}:2019/config/')
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(caddy_url)
+                if resp.status_code < 400:
+                    try:
+                        payload = resp.json()
+                        payload = _sanitize_dict(payload)
+                    except Exception:
+                        payload = {'raw': resp.text[:2000]}
+                    message = "Caddy routes retrieved successfully."
+                    result = {'status': 'ok', 'config': payload}
+                else:
+                    message = f"Caddy routes degraded: HTTP {resp.status_code}"
+                    result = {'status': 'degraded', 'http_status': resp.status_code, 'body': resp.text[:1000]}
+        except Exception as exc:
+            message = f"Caddy routes degraded: {exc}"
+            result = {'status': 'degraded', 'error': str(exc)}
+        return _ops_result('caddy_routes', message, {'check': result})
+
+    @router.get('/ops/netbox-sync-status')
+    async def openclaw_netbox_sync_status(request: Request) -> dict[str, Any]:
+        """Return Netbox sync status. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['netbox-sync', '--status'], timeout=8)
+        message = (
+            "Netbox sync status returned."
+            if result.get('status') == 'ok' else
+            f"Netbox sync status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('netbox_sync_status', message, {'output': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/redmine-status')
+    async def openclaw_redmine_status(request: Request) -> dict[str, Any]:
+        """Check Redmine via Converge. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        from routes.openclaw_bridge_routes import _converge_config
+        try:
+            base_url, api_key = _converge_config()
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(f"{base_url}/health", headers={"Authorization": f"Bearer {api_key}"})
+                if resp.status_code < 400:
+                    try:
+                        payload = resp.json()
+                        payload = _sanitize_dict(payload)
+                    except Exception:
+                        payload = {'raw': resp.text[:2000]}
+                    message = "Redmine (Converge) is healthy."
+                    result = {'status': 'ok', 'health': payload}
+                else:
+                    message = f"Redmine (Converge) degraded: HTTP {resp.status_code}"
+                    result = {'status': 'degraded', 'http_status': resp.status_code, 'body': resp.text[:1000]}
+        except Exception as exc:
+            message = f"Redmine (Converge) check failed: {exc}"
+            result = {'status': 'degraded', 'error': str(exc)}
+        return _ops_result('redmine_status', message, {'check': result})
+
+    @router.get('/ops/github-failed')
+    async def openclaw_github_failed(request: Request) -> dict[str, Any]:
+        """List failed GitHub actions. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['gh', 'run', 'list', '--status', 'failure', '--limit', '5'], timeout=10)
+        message = (
+            "Failed GitHub runs retrieved."
+            if result.get('status') == 'ok' else
+            f"GitHub check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('github_failed', message, {'output': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/ollama-models')
+    async def openclaw_ollama_models(request: Request) -> dict[str, Any]:
+        """List Ollama models. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['ollama', 'list'], timeout=8)
+        message = (
+            "Ollama models retrieved."
+            if result.get('status') == 'ok' else
+            f"Ollama check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('ollama_models', message, {'table': result.get('stdout') or '', 'check': result})
+
+    @router.post('/ops/docker-restart')
+    async def openclaw_docker_restart(request: Request, body: DockerRestartRequest) -> dict[str, Any]:
+        """Restart a docker container. Requires: homelab:write and --confirm."""
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("docker_restart", body.container, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+        
+        if not re.match(r'^[A-Za-z0-9_-]+$', body.container):
+            _audit_write_action("docker_restart", body.container, owner, True, "rejected_invalid_name")
+            raise HTTPException(400, "Invalid container name format")
+
+        service = _restartable_container(body.container)
+        if not service:
+            _audit_write_action("docker_restart", body.container, owner, True, "rejected_not_allowlisted")
+            raise HTTPException(403, "Container restart is not allowlisted")
+
+        safe_container = urllib.parse.quote(body.container, safe='')
+        result = _docker_api_request(f"/containers/{safe_container}/restart", method="POST", timeout=30)
+        
+        if result.get('status') == 'ok' and result.get('http_status', 500) < 400:
+            _audit_write_action("docker_restart", body.container, owner, True, "success")
+            return _ops_result('docker_restart', f"Container {body.container} restarted.", {
+                'container': body.container,
+                'service': service.get('name'),
+            })
+        else:
+            err = result.get('error') or result.get('body') or f"HTTP {result.get('http_status')}"
+            _audit_write_action("docker_restart", body.container, owner, True, f"failed: {err}")
+            raise HTTPException(500, f"Failed to restart container: {err}")
+
+    @router.post('/ops/backup/{job_name}')
+    async def openclaw_run_backup(
+        request: Request, job_name: str, body: BackupJobRequest
+    ) -> dict[str, Any]:
+        """Run a named backup job from the allowlist.
+
+        Requires: homelab:write + confirm=true. Job must exist in backup_jobs
+        config (backup_jobs list in homelab_services.json).
+        """
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action('backup', job_name, owner, False, 'aborted_no_confirm')
+            raise HTTPException(400, 'Write action requires confirm=true')
+
+        jobs = _load_backup_jobs()
+        job = next((j for j in jobs if j.get('name') == job_name), None)
+        if not job:
+            _audit_write_action('backup', job_name, owner, True, 'rejected_not_found')
+            raise HTTPException(404, f'Backup job {job_name!r} not found in allowlist')
+
+        command: list[str] | None = job.get('command')
+        script: str | None = job.get('script')
+        if command:
+            if not isinstance(command, list) or not command:
+                _audit_write_action('backup', job_name, owner, True, 'rejected_invalid_command')
+                raise HTTPException(500, f'Backup job {job_name!r} has an invalid command configuration')
+            args = [str(a) for a in command]
+        elif script:
+            if not str(script).startswith('/'):
+                _audit_write_action('backup', job_name, owner, True, 'rejected_relative_script')
+                raise HTTPException(500, f'Backup job {job_name!r} script must be an absolute path')
+            args = [str(script)]
+        else:
+            _audit_write_action('backup', job_name, owner, True, 'rejected_no_command')
+            raise HTTPException(500, f'Backup job {job_name!r} has no command or script configured')
+
+        result = _run_static_command(args, timeout=120)
+        if result.get('status') == 'ok':
+            _audit_write_action('backup', job_name, owner, True, 'success')
+            return _ops_result('backup', f'Backup job {job_name!r} completed.', {
+                'job': job_name,
+                'description': job.get('description'),
+                'check': result,
+            })
+        else:
+            err = result.get('error') or result.get('stderr') or f"exit {result.get('returncode')}"
+            _audit_write_action('backup', job_name, owner, True, f'failed: {err}')
+            raise HTTPException(500, f'Backup job {job_name!r} failed: {err}')
+
+    @router.post('/events/{event_id}/redmine-ticket')
+    async def openclaw_create_redmine_ticket(request: Request, event_id: str, body: RedmineTicketRequest) -> dict[str, Any]:
+        """Create a Redmine ticket from a homelab event. Requires: homelab:write and --confirm."""
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("create_redmine_ticket", event_id, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+            
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, "Event not found")
+
+        create_path = (os.getenv("CONVERGE_TICKET_CREATE_PATH") or "").strip()
+        if not create_path:
+            _audit_write_action("create_redmine_ticket", event_id, owner, True, "failed: converge_create_not_configured")
+            raise HTTPException(501, "Converge ticket creation endpoint is not configured")
+
+        from routes.openclaw_bridge_routes import _converge_config
+        try:
+            base_url, api_key = _converge_config()
+            if not create_path.startswith("/"):
+                create_path = "/" + create_path
+            payload = {
+                "subject": f"[{event.get('service')}] {event.get('title')}",
+                "description": f"Event ID: {event_id}\nSeverity: {event.get('severity')}\n\n{event.get('summary')}",
+                "priority": "High" if event.get('severity') == 'critical' else "Normal",
+                "source": "odysseus_openclaw_homelab",
+                "source_event": _compact_event(event),
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(f"{base_url}{create_path}", headers={"X-API-Key": api_key}, json=payload)
+                if resp.status_code >= 400:
+                    raise Exception(f"Converge returned HTTP {resp.status_code}: {resp.text[:200]}")
+                data = resp.json()
+                if isinstance(data, dict):
+                    issue = data.get('issue') or {}
+                    issue_id = issue.get('id') or data.get('id')
+                    issue_url = issue.get('url') or data.get('url')
+                else:
+                    issue_id = None
+                    issue_url = None
+                
+                details = {"issue_id": issue_id}
+                if issue_url:
+                    details["url"] = issue_url
+                _audit_write_action("create_redmine_ticket", event_id, owner, True, "success", details)
+                return _ops_result('create_redmine_ticket', f"Ticket created for event {event_id}.", details)
+        except Exception as exc:
+            _audit_write_action("create_redmine_ticket", event_id, owner, True, f"failed: {exc}")
+            raise HTTPException(500, f"Failed to create ticket: {exc}")
+
+    # ------------------------------------------------------------------
+    # Event read routes
+    # ------------------------------------------------------------------
+
+    @router.post('/incidents/record')
+    async def openclaw_record_incident(request: Request, body: IncidentAlertRequest) -> dict[str, Any]:
+        """Record an external incident alert as a durable event. Requires: events:write."""
+        owner = _scope_owner(request, EVENTS_WRITE_SCOPES)
+        service = _alert_service(body)
+        severity = str(body.severity or 'critical').lower()
+        if severity not in {'info', 'warning', 'critical'}:
+            severity = 'warning'
+        title, summary = _alert_text(body, service)
+        metadata = _sanitize_dict({
+            **body.metadata,
+            'container': body.container,
+            'labels': body.labels or body.common_labels,
+            'annotations': body.annotations or body.common_annotations,
+            'alerts': body.alerts,
+            'status': body.status,
+            'receiver': body.receiver,
+        })
+        dedupe_key = body.dedupe_key or f'incident:{body.source}:{service}:{title}'
+        store = EventStore()
+        try:
+            event = store.record_event(
+                source=body.source,
+                service=service,
+                severity=severity,
+                title=title,
+                summary=summary,
+                dedupe_key=dedupe_key,
+                owner=owner,
+                metadata=metadata,
+                suggested_actions=['ack', 'investigate', 'diagnose', 'resolve', 'view_service'],
+            )
+        except IOError as exc:
+            raise HTTPException(500, f'Persistence error: {exc}')
+        if event.get("count", 1) == 1:
+            notify_new_event(event)
+        return _ok(
+            message=f'Incident recorded for {service}.',
+            event=_compact_event(event),
+        ) | {'links': {'diagnose': f'{BASE_URL}/incidents/{event["id"]}/diagnose'}}
+
+    @router.get('/incidents/{event_id}/diagnose')
+    async def openclaw_diagnose_incident(request: Request, event_id: str) -> dict[str, Any]:
+        """Diagnose a durable event using safe read-only homelab evidence. Requires: events:read + homelab:read."""
+        _scope_owner(request, EVENTS_READ_SCOPES)
+        if not _has_scope(request, HOMELAB_READ_SCOPES):
+            raise HTTPException(403, 'API token missing required scope: homelab:read')
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, 'Event not found')
+        diagnosis = await _diagnose_event(event)
+        return _ops_result(
+            'incident_diagnosis',
+            f'Incident diagnosis ready for {event.get("service")}.',
+            diagnosis,
+        )
+
+    @router.post('/incidents/{event_id}/restart')
+    async def openclaw_restart_incident_service(
+        request: Request, event_id: str, body: IncidentRestartRequest
+    ) -> dict[str, Any]:
+        """Restart the container associated with an incident event.
+
+        Requires: homelab:write + confirm=true. Container must be in the
+        restart allowlist (restart_allowed=true in services config).
+        """
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action('incident_restart', event_id, owner, False, 'aborted_no_confirm')
+            raise HTTPException(400, 'Write action requires confirm=true')
+
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, 'Event not found')
+
+        container, service = _event_container(event)
+        if not container:
+            _audit_write_action('incident_restart', event_id, owner, True, 'rejected_no_container')
+            raise HTTPException(403, 'No registered container found for this event; cannot restart')
+
+        restart_service = _restartable_container(container)
+        if not restart_service:
+            _audit_write_action('incident_restart', event_id, owner, True, 'rejected_not_allowlisted')
+            raise HTTPException(403, f'Container {container!r} restart is not allowlisted')
+
+        safe_container = urllib.parse.quote(container, safe='')
+        result = _docker_api_request(f'/containers/{safe_container}/restart', method='POST', timeout=30)
+        if result.get('status') == 'ok' and result.get('http_status', 500) < 400:
+            _audit_write_action('incident_restart', event_id, owner, True, 'success',
+                                {'container': container, 'service': restart_service.get('name')})
+            return _ops_result('incident_restart', f'Container {container} restarted.', {
+                'event_id': event_id,
+                'container': container,
+                'service': restart_service.get('name'),
+            })
+        else:
+            err = result.get('error') or result.get('body') or f"HTTP {result.get('http_status')}"
+            _audit_write_action('incident_restart', event_id, owner, True, f'failed: {err}')
+            raise HTTPException(500, f'Failed to restart container: {err}')
+
+    @router.get('/events')
+    async def openclaw_list_events(
+        request: Request,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """List homelab events in compact Slack-friendly format.
+
+        Requires: events:read
+        """
+        _scope_owner(request, EVENTS_READ_SCOPES)
+        if limit is not None and not (1 <= limit <= 100):
+            raise HTTPException(400, 'limit must be between 1 and 100')
+
+        store = EventStore()
+        try:
+            events = store.get_events(status=status, limit=limit)
+        except Exception as e:
+            raise HTTPException(500, f'Persistence error: {e}')
+
+        compact = [_compact_event(e) for e in events]
+        count = len(compact)
+        msg = f"{count} event(s) returned." if count else 'No events found.'
+        return _ok(message=msg, events=compact) | {
+            'links': {'events': f'{BASE_URL}/events', 'health': f'{BASE_URL}/health'},
+        }
+
+    @router.get('/events/{event_id}')
+    async def openclaw_get_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Get a single event by ID.
+
+        Requires: events:read
+        """
+        _scope_owner(request, EVENTS_READ_SCOPES)
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, 'Event not found')
+        return _ok(
+            message=f"Event {event_id}.",
+            event=_compact_event(event),
+        )
+
+    # ------------------------------------------------------------------
+    # Event lifecycle mutation routes
+    # ------------------------------------------------------------------
+
+    @router.post('/events/{event_id}/ack')
+    async def openclaw_ack_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Acknowledge an open event.
+
+        Requires: events:ack
+        """
+        owner = _scope_owner(request, EVENTS_ACK_SCOPES)
+        store = EventStore()
+        try:
+            event = store.update_status(event_id, 'acknowledged', owner)
+            if not event:
+                raise HTTPException(404, 'Event not found')
+            return _ok(
+                message=f"Event {event_id} acknowledged by {owner}.",
+                event=_compact_event(event),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f'Persistence error: {e}')
+
+    @router.post('/events/{event_id}/investigate')
+    async def openclaw_investigate_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Mark an event as being investigated.
+
+        Requires: events:ack
+        """
+        owner = _scope_owner(request, EVENTS_ACK_SCOPES)
+        store = EventStore()
+        try:
+            event = store.update_status(event_id, 'investigating', owner)
+            if not event:
+                raise HTTPException(404, 'Event not found')
+            return _ok(
+                message=f"Event {event_id} marked as investigating by {owner}.",
+                event=_compact_event(event),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f'Persistence error: {e}')
+
+    @router.post('/events/{event_id}/resolve')
+    async def openclaw_resolve_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Resolve an event.
+
+        Requires: events:resolve
+        """
+        owner = _scope_owner(request, EVENTS_RESOLVE_SCOPES)
+        store = EventStore()
+        try:
+            event = store.update_status(event_id, 'resolved', owner)
+            if not event:
+                raise HTTPException(404, 'Event not found')
+            return _ok(
+                message=f"Event {event_id} resolved by {owner}.",
+                event=_compact_event(event),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f'Persistence error: {e}')
+
+    @router.post('/events/{event_id}/ignore')
+    async def openclaw_ignore_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Ignore an event.
+
+        Requires: events:resolve
+        """
+        owner = _scope_owner(request, EVENTS_RESOLVE_SCOPES)
+        store = EventStore()
+        try:
+            event = store.update_status(event_id, 'ignored', owner)
+            if not event:
+                raise HTTPException(404, 'Event not found')
+            return _ok(
+                message=f"Event {event_id} ignored by {owner}.",
+                event=_compact_event(event),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f'Persistence error: {e}')
+
+    return router

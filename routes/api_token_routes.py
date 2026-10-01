@@ -14,6 +14,11 @@ MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
 ALLOWED_SCOPES = {
     "chat",
+    "converge:read",
+    "workflows:trigger",
+    "web:read",
+    "research:run",
+    "tools:use",
     "todos:read",
     "todos:write",
     "documents:read",
@@ -27,12 +32,38 @@ ALLOWED_SCOPES = {
     "memory:write",
     "cookbook:read",
     "cookbook:launch",
+    "homelab:read",
+    "events:read",
+    "events:write",
+    "events:ack",
+    "events:resolve",
+    "n8n:read",
+    "n8n:events",
+    "n8n:write",
+    "homelab:write",
+    "converge:write",
+    "mac:control",
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
+    "openclaw_bridge": [
+        "chat",
+        "converge:read",
+        "converge:write",
+        "email:read",
+        "homelab:read",
+        "events:read",
+        "events:write",
+        "events:ack",
+        "events:resolve",
+        "n8n:read",
+        "n8n:events",
+        "mac:control",
+    ],
     "codex_todos": ["todos:read", "todos:write"],
     "codex_documents": ["documents:read", "documents:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
+    "converge_bridge": ["calendar:read"],
 }
 
 

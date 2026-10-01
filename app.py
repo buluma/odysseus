@@ -273,6 +273,9 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        # Converge → Odysseus ticket-lifecycle webhooks. Auth is HMAC-SHA256
+        # via X-Webhook-Signature; Converge cannot supply a session cookie.
+        "/api/openclaw/converge/webhook",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -791,6 +794,35 @@ app.include_router(setup_task_routes(task_scheduler))
 from routes.assistant_routes import setup_assistant_routes
 app.include_router(setup_assistant_routes(task_scheduler))
 
+from routes.openclaw_bridge_routes import setup_openclaw_bridge_routes
+app.include_router(setup_openclaw_bridge_routes(
+    session_manager, chat_handler, chat_processor,
+    memory_manager, research_handler,
+    memory_vector=memory_vector,
+    webhook_manager=webhook_manager,
+    task_scheduler=task_scheduler,
+))
+from routes.openclaw_inbox_routes import setup_openclaw_inbox_routes
+app.include_router(setup_openclaw_inbox_routes())
+
+# Homelab operations
+from routes.homelab_routes import setup_homelab_routes
+from routes.event_routes import setup_event_routes
+from routes.openclaw_homelab_routes import setup_openclaw_homelab_routes
+from routes.openclaw_streamline_routes import setup_openclaw_streamline_routes
+app.include_router(setup_homelab_routes())
+app.include_router(setup_event_routes())
+app.include_router(setup_openclaw_homelab_routes())
+app.include_router(setup_openclaw_streamline_routes())
+from routes.n8n_routes import setup_n8n_routes
+from routes.openclaw_n8n_routes import setup_openclaw_n8n_routes
+app.include_router(setup_n8n_routes())
+app.include_router(setup_openclaw_n8n_routes())
+from routes.openclaw_mac_routes import setup_openclaw_mac_routes
+app.include_router(setup_openclaw_mac_routes())
+from routes.openclaw_converge_webhook_routes import setup_converge_webhook_routes
+app.include_router(setup_converge_webhook_routes())
+
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
 calendar_router = setup_calendar_routes(upload_handler=upload_handler)
@@ -799,6 +831,10 @@ app.include_router(calendar_router)
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
+
+# Terminal agents (tmux-backed Codex/Claude/shell sessions)
+from routes.terminal_agent_routes import setup_terminal_agent_routes
+app.include_router(setup_terminal_agent_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
@@ -876,6 +912,12 @@ app.include_router(setup_codex_routes(
     document_router=document_router,
 ))
 app.include_router(setup_claude_routes())
+
+# Converge bridge — HTTP surface for Converge's calendar-meeting timelog
+# correlation poller (SHA-172). Reuses api_token scopes (calendar:read) via
+# the converge_bridge token profile so it can only read calendar events.
+from routes.converge_calendar_routes import setup_converge_calendar_routes
+app.include_router(setup_converge_calendar_routes(calendar_router=calendar_router))
 
 from routes.vault.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
