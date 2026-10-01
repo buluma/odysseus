@@ -32,6 +32,7 @@ import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js';
 import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import eventsModule from './js/events.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
 import settingsModule from './js/settings.js?v=20260815approvalsave1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -174,6 +175,7 @@ function initRailHoverLabels() {
     'rail-cookbook': 'Cookbook',
     'rail-research': 'Research',
     'rail-email': 'Email',
+    'rail-events': 'Events',
     'rail-gallery': 'Gallery',
     'rail-archive': 'Library',
     'rail-memory': 'Brain',
@@ -1082,6 +1084,15 @@ function initializeEventListeners() {
         if (calendarModule.isCalendarOpen()) calendarModule.closeCalendar();
         else calendarModule.openCalendar();
       }
+    });
+  }
+
+  // Events tool button
+  const toolEventsBtn = el('tool-events-btn');
+  if (toolEventsBtn) {
+    toolEventsBtn.addEventListener('click', () => {
+      if (eventsModule.isEventsOpen()) eventsModule.closeEvents();
+      else eventsModule.openEvents();
     });
   }
 
@@ -3745,6 +3756,7 @@ function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
+    'rail-events':    'tool-events-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',
