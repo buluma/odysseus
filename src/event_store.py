@@ -4,9 +4,11 @@ import uuid
 import logging
 from datetime import datetime, timezone
 
+from src.constants import HOMELAB_EVENTS_FILE
+
 logger = logging.getLogger(__name__)
 
-EVENTS_FILE = os.path.join("data", "homelab_events.json")
+EVENTS_FILE = HOMELAB_EVENTS_FILE
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

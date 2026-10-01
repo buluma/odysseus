@@ -243,3 +243,18 @@ async def test_event_sorting(mock_event_store):
     assert len(res["events"]) == 2
     assert res["events"][0]["id"] == e1["id"]
     assert res["events"][1]["id"] == e2["id"]
+
+
+def test_event_store_default_path_follows_data_dir_env(tmp_path):
+    """The default events file lives under ODYSSEUS_DATA_DIR, not the CWD."""
+    import subprocess
+    import sys
+
+    data_dir = tmp_path / "custom-data"
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "ODYSSEUS_DATA_DIR": str(data_dir), "PYTHONPATH": repo_root}
+    out = subprocess.run(
+        [sys.executable, "-c", "import src.event_store as m; print(m.EVENTS_FILE)"],
+        env=env, cwd=str(tmp_path), capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == str(data_dir / "homelab_events.json")
