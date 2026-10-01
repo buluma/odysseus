@@ -16,6 +16,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # requirements-optional.txt pins to releases more than 30 days old (issue
+    # #485). Enforce the same rule here so a brand-new release is not proposed.
+    # Applies to version updates only; security updates still arrive at once.
+    cooldown:
+      default-days: 30
     groups:
       python:
         patterns: ["*"]
