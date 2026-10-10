@@ -22,6 +22,8 @@ secrets.env~
 !secrets.env.example
 /data/
 /logs/
+# Snapshots from scripts/odysseus-backup hold user data and the app key.
+/backups/
 .git/
 .claude/
 .playwright-mcp/

@@ -250,6 +250,13 @@ def test_dockerignore_excludes_secrets_editor_backups():
     assert "!secrets.env.example" in patterns
 
 
+def test_dockerignore_keeps_backup_snapshots_out_of_the_image():
+    # scripts/odysseus-backup snapshots hold user data and the app key; a bare
+    # COPY . . would bake them into an image layer.
+    patterns = set((ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
+    assert "/backups/" in patterns
+
+
 def test_cors_allow_methods_include_patch():
     methods = _cors_allow_methods()
     assert "PATCH" in methods
