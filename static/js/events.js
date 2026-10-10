@@ -4,6 +4,7 @@
  */
 
 import * as Modals from './modalManager.js';
+import { BULK_VERBS, runBulkVerb } from './eventsBulk.js';
 
 const API_BASE = window.location.origin;
 const MODAL_ID = 'events-modal';
@@ -15,6 +16,9 @@ let _events = [];
 let _tab = 'open';    // 'open' | 'all' | 'resolved'
 let _pollTimer = null;
 let _escHandler = null;
+let _selectMode = false;
+let _selected = new Set();
+let _ddEl = null;
 
 // ---- API ----
 
@@ -100,6 +104,8 @@ function _renderList(modal) {
   const body = modal.querySelector('#events-body');
   if (!body) return;
   const list = _filterEvents(_events, _tab);
+  // A poll can drop events out from under the selection.
+  _selected.forEach(id => { if (!list.some(ev => ev.id === id)) _selected.delete(id); });
 
   if (!list.length) {
     body.innerHTML = `<div style="text-align:center;opacity:0.45;padding:40px 0;font-size:13px;">No events</div>`;
@@ -136,6 +142,7 @@ function _renderList(modal) {
     return `
       <div class="ev-card" data-evid="${ev.id}">
         <div class="ev-card-header">
+          ${_selectMode ? `<input type="checkbox" class="memory-select-cb ev-select-cb" data-evid="${ev.id}"${_selected.has(ev.id) ? ' checked' : ''} />` : ''}
           <span class="ev-sev-badge" style="color:${sevColor};border-color:${sevColor};">${(ev.severity || 'info').toUpperCase()}</span>
           <span class="ev-status-chip">${statusLabel}</span>
           <span class="ev-service">${_esc(ev.service || '')}</span>
@@ -172,6 +179,19 @@ function _renderList(modal) {
     });
   });
 
+  if (_selectMode) {
+    body.querySelectorAll('.ev-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.ev-action-btn, .ev-timeline-toggle')) return;
+        if (e.target.classList.contains('ev-select-cb')) return;
+        _toggleSelected(modal, card.dataset.evid);
+      });
+    });
+    body.querySelectorAll('.ev-select-cb').forEach(cb => {
+      cb.addEventListener('change', () => _toggleSelected(modal, cb.dataset.evid));
+    });
+  }
+
   body.querySelectorAll('.ev-timeline-toggle').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -183,6 +203,95 @@ function _renderList(modal) {
       btn.classList.toggle('ev-timeline-open', !open);
     });
   });
+}
+
+// ---- Bulk selection ----
+
+function _visibleIds() {
+  return _filterEvents(_events, _tab).map(e => e.id);
+}
+
+function _syncBulkBar(modal) {
+  const ids = _visibleIds();
+  const countEl = modal.querySelector('#ev-selected-count');
+  if (countEl) countEl.textContent = `${_selected.size} Selected`;
+  const actionsBtn = modal.querySelector('#ev-bulk-actions');
+  if (actionsBtn) actionsBtn.style.color = _selected.size > 0 ? 'var(--fg)' : '';
+  const all = modal.querySelector('#ev-select-all');
+  if (all) all.checked = ids.length > 0 && ids.every(id => _selected.has(id));
+}
+
+function _toggleSelected(modal, id) {
+  if (_selected.has(id)) _selected.delete(id); else _selected.add(id);
+  _renderList(modal);
+  _syncBulkBar(modal);
+}
+
+function _setSelectMode(modal, on) {
+  _selectMode = on;
+  _selected.clear();
+  _closeDropdown();
+  modal.querySelector('#ev-bulk-bar')?.classList.toggle('hidden', !on);
+  const btn = modal.querySelector('#ev-select-btn');
+  if (btn) { btn.classList.toggle('active', on); btn.textContent = on ? 'Cancel' : 'Select'; }
+  _renderList(modal);
+  _syncBulkBar(modal);
+}
+
+function _closeDropdown() {
+  if (_ddEl) { _ddEl._teardown?.(); _ddEl = null; }
+}
+
+function _showBulkDropdown(modal, anchor) {
+  if (_ddEl && _ddEl._anchor === anchor) { _closeDropdown(); return; }
+  _closeDropdown();
+  const dd = document.createElement('div');
+  dd.className = 'dropdown session-dropdown-menu';
+  dd._anchor = anchor;
+  BULK_VERBS.forEach(({ verb, label }) => {
+    const row = document.createElement('div');
+    row.className = 'dropdown-item-compact';
+    row.textContent = label;
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _closeDropdown();
+      _applyBulk(modal, verb);
+    });
+    dd.appendChild(row);
+  });
+  document.body.appendChild(dd);
+  const rect = anchor.getBoundingClientRect();
+  dd.style.right = (window.innerWidth - rect.right) + 'px';
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.display = 'block';
+  dd.style.zIndex = '100000';
+  const close = (e) => { if (!dd.contains(e.target)) _closeDropdown(); };
+  setTimeout(() => document.addEventListener('click', close), 0);
+  dd._teardown = () => { document.removeEventListener('click', close); dd.remove(); };
+  _ddEl = dd;
+}
+
+async function _applyBulk(modal, verb) {
+  const ids = [..._selected];
+  if (!ids.length) return;
+  const status = modal.querySelector('#ev-last-refresh');
+  if (status) status.textContent = `updating ${ids.length}…`;
+  const { updated, succeeded, failed } = await runBulkVerb(ids, verb, _action);
+  updated.forEach(ev => {
+    const idx = _events.findIndex(e => e.id === ev.id);
+    if (idx !== -1) _events[idx] = ev;
+  });
+  _updateRailBadge(_events);
+  // Keep failures selected so the user can retry them.
+  _selected = new Set(failed);
+  if (!failed.length) _setSelectMode(modal, false);
+  else { _renderList(modal); _syncBulkBar(modal); }
+  _renderTabs(modal);
+  if (status) {
+    status.textContent = failed.length
+      ? `${succeeded.length} updated, ${failed.length} failed`
+      : `${succeeded.length} updated`;
+  }
 }
 
 function _renderTabs(modal) {
@@ -212,7 +321,9 @@ function _renderTabs(modal) {
 function _setTabActive(modal, tab) {
   _tab = tab;
   modal.querySelectorAll('.ev-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  _selected.clear();
   _renderList(modal);
+  _syncBulkBar(modal);
 }
 
 function _esc(str) {
@@ -220,6 +331,11 @@ function _esc(str) {
 }
 
 // ---- Polling ----
+
+function _showStatus(modal, text) {
+  const el = modal.querySelector('#ev-last-refresh');
+  if (el) el.textContent = text;
+}
 
 function _startPoll(modal) {
   _stopPoll();
@@ -273,9 +389,17 @@ export async function openEvents() {
           Resolved <span class="memory-count" id="ev-count-resolved" style="font-size:0.8em;opacity:0.6;margin-left:4px;"></span>
         </button>
         <span style="flex:1"></span>
+        <button class="memory-toolbar-btn" id="ev-select-btn" title="Select events" style="margin:auto 4px auto 0;">Select</button>
         <button id="ev-refresh-btn" class="section-header-btn" title="Refresh" style="font-size:11px;padding:0 6px;height:22px;margin:auto 0;">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-1px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.08-4"/></svg>
         </button>
+      </div>
+
+      <div id="ev-bulk-bar" class="memory-bulk-bar hidden" style="margin:6px 12px 0;">
+        <label class="memory-bulk-check-all" style="position:relative;left:1px;"><input type="checkbox" id="ev-select-all" /> All</label>
+        <span id="ev-selected-count">0 Selected</span>
+        <button id="ev-bulk-actions" class="memory-toolbar-btn" style="margin-left:auto;">Actions <span style="opacity:0.55;font-size:9px;">&#9660;</span></button>
+        <button id="ev-bulk-cancel" class="memory-toolbar-btn" title="Cancel" style="margin-left:4px;margin-right:4px;padding:3px 6px;">&#10005;</button>
       </div>
 
       <div id="events-body" class="modal-body" style="padding:10px 12px;overflow-y:auto;max-height:55vh;display:flex;flex-direction:column;gap:8px;">
@@ -287,6 +411,24 @@ export async function openEvents() {
 
   modal.querySelectorAll('.ev-tab').forEach(btn => {
     btn.addEventListener('click', () => _setTabActive(modal, btn.dataset.tab));
+  });
+
+  modal.querySelector('#ev-select-btn').addEventListener('click', () => _setSelectMode(modal, !_selectMode));
+  modal.querySelector('#ev-bulk-cancel').addEventListener('click', () => _setSelectMode(modal, false));
+  modal.querySelector('#ev-select-all').addEventListener('change', (e) => {
+    _selected = e.target.checked ? new Set(_visibleIds()) : new Set();
+    _renderList(modal);
+    _syncBulkBar(modal);
+  });
+  modal.querySelector('#ev-selected-count').addEventListener('click', () => {
+    const all = modal.querySelector('#ev-select-all');
+    all.checked = !all.checked;
+    all.dispatchEvent(new Event('change'));
+  });
+  modal.querySelector('#ev-bulk-actions').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!_selected.size) { _showStatus(modal, 'Select events first'); return; }
+    _showBulkDropdown(modal, e.currentTarget);
   });
 
   modal.querySelector('#events-close').addEventListener('click', closeEvents);
@@ -309,7 +451,10 @@ export async function openEvents() {
     }
   });
 
-  _escHandler = (e) => { if (e.key === 'Escape') closeEvents(); };
+  _escHandler = (e) => {
+    if (e.key !== 'Escape') return;
+    if (_ddEl) _closeDropdown(); else closeEvents();
+  };
   document.addEventListener('keydown', _escHandler);
 
   Modals.register(MODAL_ID, {
@@ -336,6 +481,9 @@ export async function openEvents() {
 export function closeEvents() {
   if (!_open) return;
   _open = false;
+  _selectMode = false;
+  _selected.clear();
+  _closeDropdown();
   _stopPoll();
   if (_escHandler) {
     document.removeEventListener('keydown', _escHandler);
