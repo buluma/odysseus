@@ -661,7 +661,8 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    is .memory-select-cb across every list. */
 .memory-item:has(.memory-select-cb:checked),
 .doclib-card:has(.memory-select-cb:checked),
-.doclib-chat-row:has(.memory-select-cb:checked) {
+.doclib-chat-row:has(.memory-select-cb:checked),
+.ev-card:has(.memory-select-cb:checked) {
   border-color: color-mix(in srgb, var(--red) 40%, transparent);
   background: color-mix(in srgb, var(--red) 4%, transparent);
   /* 2px accent outline overlaid on the 1px border — reads as a thicker
