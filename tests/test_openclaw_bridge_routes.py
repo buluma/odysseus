@@ -108,7 +108,7 @@ class FakeChatHandler:
         return message, message, message, [], []
 
     def validate_and_extract_preset(self, preset_id):
-        return 0.1, 100, None, None
+        return 0.1, 100, None, None, "", "general"
 
     def update_session_name_if_needed(self, sess, text):
         return None
