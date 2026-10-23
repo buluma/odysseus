@@ -31,6 +31,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Playwright 1.64 moves .ge-layers-list in the phone-viewport computed-style
+    # snapshot under pytest (tests/css_snapshot), so hold at 1.63 until that is
+    # understood.
+    ignore:
+      - dependency-name: "@playwright/test"
+        versions: [">=1.64.0"]
     groups:
       npm:
         patterns: ["*"]
