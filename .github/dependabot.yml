@@ -21,6 +21,11 @@ updates:
     # Applies to version updates only; security updates still arrive at once.
     cooldown:
       default-days: 30
+    # Python playwright must match the Node @playwright/test version, because
+    # CI installs the browser through npx. Held with the npm entry below.
+    ignore:
+      - dependency-name: "playwright"
+        versions: [">=1.64.0"]
     groups:
       python:
         patterns: ["*"]
@@ -31,6 +36,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Same 30-day rule as pip.
+    cooldown:
+      default-days: 30
     # Playwright 1.64 moves .ge-layers-list in the phone-viewport computed-style
     # snapshot under pytest (tests/css_snapshot), so hold at 1.63 until that is
     # understood.
@@ -47,6 +55,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Same 30-day rule as pip.
+    cooldown:
+      default-days: 30
     groups:
       actions:
         patterns: ["*"]
@@ -57,3 +68,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Same 30-day rule as pip.
+    cooldown:
+      default-days: 30
+    # Python 3.15 has no PyAV (av) wheels yet, so the image build fails.
+    ignore:
+      - dependency-name: "python"
+        versions: [">=3.15"]
