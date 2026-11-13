@@ -26,6 +26,9 @@ _ORIGINAL_HTTPX_GET = httpx.get
 _ORIGINAL_HTTPX_POST = httpx.post
 
 
+_TRAILING_URL_PUNCT = ".,;:!?"
+
+
 def extract_urls(text: str) -> List[str]:
     """Extract URLs from text using regex pattern."""
     url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
@@ -37,10 +40,17 @@ def extract_urls(text: str) -> List[str]:
         # ".../Python_(programming_language)". A ')' is only dropped when it is
         # unbalanced (more ')' than '('), which is the prose-glued case such as
         # "(see https://example.com)".
-        url = re.sub(r'[.,;:!?]+$', '', url)
-        while url.endswith(')') and url.count(')') > url.count('('):
-            url = re.sub(r'[.,;:!?]+$', '', url[:-1])
-        cleaned_urls.append(url)
+        # Trim by index with one up-front count: a regex trim or a per-')'
+        # recount is quadratic on long runs, and the text is user input.
+        url = url.rstrip(_TRAILING_URL_PUNCT)
+        unbalanced = url.count(')') - url.count('(')
+        end = len(url)
+        while end and url[end - 1] == ')' and unbalanced > 0:
+            end -= 1
+            unbalanced -= 1
+            while end and url[end - 1] in _TRAILING_URL_PUNCT:
+                end -= 1
+        cleaned_urls.append(url[:end])
     return cleaned_urls
 
 
