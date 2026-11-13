@@ -1,0 +1,8 @@
+version: 2
+
+secret:
+  # Synthetic credentials that the trace artifact sanitizer test feeds in and
+  # asserts come back redacted. Mirrors the .gitleaks.toml allowlist for the
+  # same fixture; no real secret lives in this file.
+  ignored_paths:
+    - tests/test_trace_artifact_sanitizer.py
