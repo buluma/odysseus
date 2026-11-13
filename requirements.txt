@@ -4,7 +4,7 @@ python-multipart
 python-dotenv
 httpx
 httpcore>=1.0.9,<2.0
-pydantic>=2.13.5
+pydantic>=2.14.1
 pydantic-settings>=2.15.0
 SQLAlchemy
 pypdf
