@@ -179,7 +179,7 @@ jobs:
           uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
           python scripts/check_ca_trust.py --python
           uv pip install --system -r requirements.txt
-          uv pip install --system "playwright==1.62.0"
+          uv pip install --system "playwright==1.63.0"
         if: steps.docs-check.outputs.docs_only != 'true'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         if: steps.docs-check.outputs.docs_only != 'true'
